@@ -1,0 +1,19 @@
+[project]
+name = "gnn-gine-mprov3"
+version = "0.1.0"
+description = "GNN training for MPro Version 3 data (3-class Category classification; GINE + mprov3_gine_explainer_defaults)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0.0",
+    "torch-geometric>=2.3.0",
+    "rdkit>=2023.3.1",
+    "pandas>=1.5.0",
+    "numpy>=1.23.0",
+    "scikit-learn>=1.2.0",
+    "tqdm>=4.65.0",
+    "mprov3-gine-explainer-defaults",
+]
+
+[tool.uv.sources]
+mprov3-gine-explainer-defaults = { path = "../mprov3_gine_explainer_defaults", editable = true }

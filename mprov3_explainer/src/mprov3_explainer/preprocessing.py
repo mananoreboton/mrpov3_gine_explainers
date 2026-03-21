@@ -1,0 +1,137 @@
+"""
+Preprocessing phase for explanation masks (Longa et al. common representation).
+Applied uniformly to any explainer output before metrics: Conversion, Filtering, Normalization.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+import torch
+from torch_geometric.explain import Explanation
+
+
+@dataclass
+class PreprocessedExplanation:
+    """Result of preprocessing: masks + validity for metric aggregation."""
+
+    explanation: Explanation
+    valid: bool  # True if instance passes filters (correct-class, non-constant mask)
+    correct_class: bool  # True if pred_class == target_class
+
+
+def edge_mask_to_node_mask(
+    edge_index: torch.Tensor,
+    edge_mask: torch.Tensor,
+    num_nodes: Optional[int] = None,
+    aggregation: str = "mean",
+) -> torch.Tensor:
+    """
+    Convert edge mask to node mask by aggregating incident edge weights per node.
+    (Longa et al.: average incident-edge weights per node for comparability.)
+    """
+    if num_nodes is None:
+        num_nodes = int(edge_index.max().item()) + 1
+    device = edge_index.device
+    node_mask = torch.zeros(num_nodes, device=device, dtype=edge_mask.dtype)
+    if edge_mask.dim() == 0 or edge_mask.numel() == 0:
+        return node_mask
+    row, col = edge_index[0], edge_index[1]
+    if aggregation == "mean":
+        node_mask.scatter_add_(0, row, edge_mask)
+        node_mask.scatter_add_(0, col, edge_mask)
+        degree = torch.zeros(num_nodes, device=device, dtype=torch.long)
+        degree.scatter_add_(0, row, torch.ones_like(row, device=device))
+        degree.scatter_add_(0, col, torch.ones_like(col, device=device))
+        degree = degree.clamp(min=1)
+        node_mask = node_mask / degree
+    else:  # max
+        node_mask.scatter_reduce_(0, row, edge_mask, reduce="amax")
+        node_mask.scatter_reduce_(0, col, edge_mask, reduce="amax")
+    return node_mask
+
+
+def normalize_mask(mask: torch.Tensor) -> torch.Tensor:
+    """
+    Scale mask to [0, 1] per instance (min-max).
+    If constant (max == min), return zeros to avoid division by zero.
+    """
+    if mask.numel() == 0:
+        return mask
+    min_val = mask.min()
+    max_val = mask.max()
+    if (max_val - min_val).item() < 1e-12:
+        return torch.zeros_like(mask, device=mask.device)
+    return (mask - min_val) / (max_val - min_val)
+
+
+def apply_preprocessing(
+    explanation: Explanation,
+    *,
+    pred_class: int,
+    target_class: int,
+    correct_class_only: bool = True,
+    min_mask_range: float = 1e-3,
+    normalize: bool = True,
+    convert_edge_to_node: bool = False,
+) -> PreprocessedExplanation:
+    """
+    Apply Conversion (optional), Filtering, Normalization to a raw explanation.
+    Order: Conversion (if requested) -> Filtering -> Normalization.
+    """
+    edge_mask = explanation.edge_mask
+    if edge_mask is None:
+        return PreprocessedExplanation(
+            explanation=explanation,
+            valid=False,
+            correct_class=False,
+        )
+    edge_mask = edge_mask.detach().float()
+    edge_index = explanation.edge_index
+    correct_class = pred_class == target_class
+
+    # Filter: correct-class (paper: only evaluate correctly classified instances)
+    valid = True
+    if correct_class_only:
+        valid = valid and correct_class
+
+    # Filter: low-information (paper: discard nearly constant masks)
+    if edge_mask.numel() > 0:
+        rng = (edge_mask.max() - edge_mask.min()).item()
+        if rng < min_mask_range:
+            valid = False
+
+    # Optional conversion: edge -> node mask (for protocols that need node-level)
+    if convert_edge_to_node and edge_index is not None:
+        num_nodes = explanation.x.size(0) if explanation.x is not None else None
+        node_mask = edge_mask_to_node_mask(edge_index, edge_mask, num_nodes=num_nodes)
+        if normalize:
+            node_mask = normalize_mask(node_mask)
+        # Build new explanation with node_mask; keep edge_mask normalized too for fidelity
+        if normalize:
+            edge_mask = normalize_mask(edge_mask)
+        new_explanation = Explanation(
+            x=explanation.x,
+            edge_index=explanation.edge_index,
+            edge_mask=edge_mask,
+            node_mask=node_mask,
+        )
+    else:
+        if normalize:
+            edge_mask = normalize_mask(edge_mask)
+        node_out = getattr(explanation, "node_mask", None)
+        if node_out is not None and normalize:
+            node_out = normalize_mask(node_out.detach().float())
+        new_explanation = Explanation(
+            x=explanation.x,
+            edge_index=explanation.edge_index,
+            edge_mask=edge_mask,
+            node_mask=node_out,
+        )
+
+    return PreprocessedExplanation(
+        explanation=new_explanation,
+        valid=valid,
+        correct_class=correct_class,
+    )
