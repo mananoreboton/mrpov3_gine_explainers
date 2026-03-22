@@ -10,7 +10,7 @@ from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
 from dataset import MProV3Dataset, get_train_val_test_indices, load_dataset_pdb_order
-from config import SplitConfig
+from mprov3_gine_explainer_defaults import SplitConfig
 
 
 def collate_batch(

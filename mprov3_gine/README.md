@@ -2,7 +2,7 @@
 
 Python pipeline to train a Graph Neural Network on the MPro-URV Version 3 snapshot for **3-class classification** (Category: low / medium / high potency). The codebase is split into configuration, data loading, GINE model, and separate training, validation, and evaluation logic.
 
-**Shared defaults:** Numeric training, fold, and GINE architecture defaults come from the sibling package **`mprov3_gine_explainer_defaults`** (path dependency in `pyproject.toml`). Project-local paths, results layout strings, and **`SplitConfig`** live in **`config.py`**. The model class is **`MProGNN`** in **`model.py`** (constructed directly in `train.py` / `evaluate.py` with CLI overrides on top of shared defaults).
+**Shared defaults:** Training, fold, GINE architecture, path segment names, **`SplitConfig`**, **`DEFAULT_DATA_ROOT`**, **`DEFAULT_RESULTS_ROOT`**, and sibling project **`Path`**s (**`WORKSPACE_ROOT`**, **`GINE_PROJECT_DIR`**, …) come from **`mprov3_gine_explainer_defaults`** (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is **`MProGNN`** in **`model.py`**.
 
 ## Overview
 
@@ -136,7 +136,7 @@ flowchart TB
     end
 
     subgraph shared [Shared]
-        Config[config.py]
+        Defaults[mprov3_gine_explainer_defaults]
         Utils[utils.py]
     end
 
@@ -158,10 +158,10 @@ flowchart TB
         Evaluation[evaluation.py]
     end
 
-    Config --> BuildScript
-    Config --> TrainScript
-    Config --> EvalScript
-    Config --> Loaders
+    Defaults --> BuildScript
+    Defaults --> TrainScript
+    Defaults --> EvalScript
+    Defaults --> Loaders
     Utils --> BuildScript
     Utils --> TrainScript
     Utils --> EvalScript
@@ -397,7 +397,7 @@ You can reuse configs, loaders, and train/val/test logic in your own scripts.
 
 #### Configuration
 
-- **`config.SplitConfig`**: train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (PyG dataset folder).
+- **`SplitConfig`** (from **`mprov3_gine_explainer_defaults`**): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (PyG dataset folder).
 - **Training hyperparameters** (`epochs`, `batch_size`, `lr`, `seed`): defaults from **`mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`, `DEFAULT_SEED`).
 - **`model.MProGNN`**: GINE architecture; construct with hyperparameters (defaults align with **`mprov3_gine_explainer_defaults`** e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
 
@@ -437,7 +437,7 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
 )
-from config import SplitConfig
+from mprov3_gine_explainer_defaults import SplitConfig
 from loaders import create_data_loaders
 from model import MProGNN
 from train_epoch import train_one_epoch
@@ -492,7 +492,6 @@ print_test_report(test_metrics)
 
 | File | Role |
 |------|------|
-| **config.py** | Default paths, default split file names, `DEFAULT_PYG_DATASET_NAME`; `SplitConfig`. Training defaults: `mprov3_gine_explainer_defaults` + `train.py` argparse. |
 | **model.py** | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`). |
 | **dataset.py** | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
 | **utils.py** | `run_timestamp()`, `get_latest_timestamp_dir()`, `html_escape()`, `html_document()`, `RunLogger` (tee to file + stdout). |

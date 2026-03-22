@@ -11,6 +11,10 @@ dependencies = [
     "torch-sparse",
     "torch-scatter",
     "numpy>=1.23.0,<2.0",
+    "pandas>=1.5.0",
+    "rdkit>=2023.3.1",
+    "tqdm>=4.65.0",
+    "pgmpy>=0.1.23",
     "mprov3-gine-explainer-defaults",
 ]
 

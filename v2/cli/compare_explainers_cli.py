@@ -8,7 +8,10 @@ from typing import List, Optional, Sequence
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Check that registered explainer classes exist and expose build_explainer.",
+        description=(
+            "Run v2 explainers on latest mprov3_gine dataset/checkpoint; "
+            "write explanation_report.json and masks/ under mprov3_explainer/results/explanations/."
+        ),
     )
     p.add_argument(
         "--explainers",

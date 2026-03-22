@@ -49,9 +49,12 @@ def is_registered(name: str) -> bool:
     return name.upper() in EXPLAINER_REGISTRY
 
 
+from explainers.explainer_build import build_explainers_for_model
+
 __all__ = [
     "DEFAULT_STRAIGHTFORWARD_EXPLAINERS",
     "EXPLAINER_REGISTRY",
     "resolve_explainer_class",
     "is_registered",
+    "build_explainers_for_model",
 ]

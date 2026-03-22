@@ -2,7 +2,7 @@
 
 Standalone tree (no imports from `mprov3_explainer/`). Implements eight “straight forward” PyG-compatible explainers from `doc/table_of_explainer_implementations.md`.
 
-PyG `model_config`, explainer-algorithm defaults, and mask-type strings come from **`mprov3_gine_explainer_defaults`** (sibling `../mprov3_gine_explainer_defaults`, see `pyproject.toml`) so they stay aligned with `mprov3_gine` and `mprov3_explainer`.
+PyG `model_config`, explainer-algorithm defaults, and mask-type strings come from **`mprov3_gine_explainer_defaults`** (sibling `../mprov3_gine_explainer_defaults`, see `pyproject.toml`) so they stay aligned with `mprov3_gine` and `mprov3_explainer`. Running `compare_explainers.py` adds `mprov3_gine` on `sys.path` and uses its loaders; **`pandas`**, **`rdkit`**, and **`tqdm`** are listed in `pyproject.toml` so those imports resolve.
 
 ## Setup
 
@@ -12,6 +12,8 @@ uv sync
 ```
 
 ## Run
+
+Uses **`WORKSPACE_ROOT`**, **`GINE_PROJECT_DIR`**, and path segments from `mprov3_gine_explainer_defaults` (sibling monorepo layout). Only **`GINE_DATASET_RUN_NAME`** and the training timestamp folder for **`GINE_CHECKPOINT`** are fixed strings in `compare_explainers.py`; adjust if needed. Explainer names are checked with **`validate_explainer_names`**. Output is **printed to the console**.
 
 ```bash
 cd v2

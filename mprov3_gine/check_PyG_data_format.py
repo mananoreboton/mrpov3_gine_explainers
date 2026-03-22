@@ -31,7 +31,7 @@ from typing import List, Tuple
 
 import torch
 
-from config import (
+from mprov3_gine_explainer_defaults import (
     CHECK_FORMAT_DATASETS_SUBDIR,
     DEFAULT_DATA_ROOT,
     DEFAULT_RESULTS_ROOT,

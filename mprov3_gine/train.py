@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 from mprov3_gine_explainer_defaults import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_DATA_ROOT,
     DEFAULT_DROPOUT,
     DEFAULT_EDGE_DIM,
     DEFAULT_FOLD_INDEX,
@@ -22,23 +23,20 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_NUM_LAYERS,
     DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
-    DEFAULT_SEED,
-    DEFAULT_TRAINING_EPOCHS,
-    DEFAULT_TRAINING_LR,
-)
-
-from config import (
-    DEFAULT_DATA_ROOT,
     DEFAULT_RESULTS_ROOT,
+    DEFAULT_SEED,
     DEFAULT_TEST_SPLIT_FILE,
     DEFAULT_TRAIN_SPLIT_FILE,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    DEFAULT_TRAINING_EPOCHS,
+    DEFAULT_TRAINING_LR,
     DEFAULT_VAL_SPLIT_FILE,
     PYG_DATA_FILENAME,
     RESULTS_DATASETS,
     RESULTS_TRAININGS,
     SplitConfig,
 )
+
 from loaders import create_data_loaders
 from model import MProGNN
 from train_epoch import train_one_epoch
@@ -52,7 +50,7 @@ def _parse_args() -> argparse.Namespace:
         "--data_root",
         type=str,
         default=None,
-        help="Path to raw MPro snapshot (Splits/, Info.csv); default: config.DEFAULT_DATA_ROOT",
+        help="Path to raw MPro snapshot (Splits/, Info.csv); default: DEFAULT_DATA_ROOT",
     )
     parser.add_argument(
         "--results_root",

@@ -18,7 +18,7 @@ from mprov3_gine_explainer_defaults import (
 
 
 class PgExplExplainer:
-    """PGExplainer (edge-level; PyG requires ``explanation_type='phenomenon'``). Training runs when explaining."""
+    """PGExplainer (edge-level; PyG requires ``explanation_type='phenomenon'`` and a ``target`` label)."""
 
     @staticmethod
     def build_explainer(

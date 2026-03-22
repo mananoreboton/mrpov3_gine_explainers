@@ -14,7 +14,7 @@ from typing import Any, List
 
 import torch
 
-from config import (
+from mprov3_gine_explainer_defaults import (
     DEFAULT_RESULTS_ROOT,
     PYG_DATA_FILENAME,
     PYG_PDB_ORDER_FILENAME,

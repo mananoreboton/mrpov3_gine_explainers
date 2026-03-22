@@ -113,6 +113,21 @@ REQUIRED_NAMES = (
     'PYG_PDB_ORDER_FILENAME',
     'DEFAULT_TRAINING_CHECKPOINT_FILENAME',
     'DEFAULT_PYG_DATASET_NAME',
+    'RUN_TIMESTAMP_FMT',
+    'run_timestamp',
+    'get_latest_timestamp_dir',
+    'resolve_checkpoint_path',
+    'resolve_dataset_dir',
+    'explanations_run_dir',
+    'visualizations_run_dir',
+    'validate_explainer_names',
+    'SplitConfig',
+    'WORKSPACE_ROOT',
+    'GINE_PROJECT_DIR',
+    'MPRO_EXPLAINER_PROJECT_DIR',
+    'V2_PROJECT_DIR',
+    'DEFAULT_DATA_ROOT',
+    'DEFAULT_RESULTS_ROOT',
 )
 
 missing = [n for n in REQUIRED_NAMES if not hasattr(m, n)]

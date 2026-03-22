@@ -8,7 +8,7 @@ from pathlib import Path
 
 import torch
 
-from config import (
+from mprov3_gine_explainer_defaults import (
     DEFAULT_DATA_ROOT,
     DEFAULT_RESULTS_ROOT,
     MPRO_LIGAND_DIR,
@@ -67,7 +67,7 @@ def main() -> None:
         "--data_root",
         type=str,
         default=None,
-        help="Path to raw MPro snapshot (Ligand/, Info.csv); default: config.DEFAULT_DATA_ROOT",
+        help="Path to raw MPro snapshot (Ligand/, Info.csv); default: DEFAULT_DATA_ROOT",
     )
     parser.add_argument(
         "--results_root",

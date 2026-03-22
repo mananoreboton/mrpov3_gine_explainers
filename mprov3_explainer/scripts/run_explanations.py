@@ -42,6 +42,7 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_VAL_SPLIT_FILE,
     RESULTS_DATASETS,
     RESULTS_DIR_NAME,
+    SplitConfig,
 )
 
 from mprov3_explainer import (
@@ -234,7 +235,6 @@ def main() -> None:
     dataset_name = dataset_dir.name
     dataset_base = results_root / RESULTS_DATASETS
 
-    from config import SplitConfig
     from loaders import create_data_loaders
     from model import MProGNN
 

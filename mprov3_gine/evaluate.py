@@ -14,6 +14,7 @@ from pathlib import Path
 import torch
 from mprov3_gine_explainer_defaults import (
     DEFAULT_BATCH_SIZE,
+    DEFAULT_DATA_ROOT,
     DEFAULT_DROPOUT,
     DEFAULT_EDGE_DIM,
     DEFAULT_FOLD_INDEX,
@@ -23,10 +24,6 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_NUM_LAYERS,
     DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
-)
-
-from config import (
-    DEFAULT_DATA_ROOT,
     DEFAULT_RESULTS_ROOT,
     DEFAULT_TEST_SPLIT_FILE,
     DEFAULT_TRAIN_SPLIT_FILE,
@@ -38,6 +35,7 @@ from config import (
     RESULTS_TRAININGS,
     SplitConfig,
 )
+
 from evaluation import evaluate_test_with_predictions, print_test_report
 from loaders import create_data_loaders
 from model import MProGNN
@@ -52,7 +50,7 @@ def _parse_args() -> argparse.Namespace:
         "--data_root",
         type=str,
         default=None,
-        help="Path to raw MPro snapshot (Splits/); default: config.DEFAULT_DATA_ROOT",
+        help="Path to raw MPro snapshot (Splits/); default: DEFAULT_DATA_ROOT",
     )
     parser.add_argument(
         "--results_root",
