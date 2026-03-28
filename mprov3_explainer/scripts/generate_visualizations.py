@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate visualization report from a previous explanation run: read explanation_report.json
-and masks from results/explanations/<timestamp>/<explainer>/, draw 2D molecules with bond coloring,
-write index.html and graphs under results/visualizations/<new_timestamp>/<explainer>/.
+Generate visualization report from a previous explanation run.
+Reads explanation_report.json and masks from results/explanations/<timestamp>/<explainer>/,
+draws 2D molecules with bond/atom coloring, writes index.html per explainer and a
+cross-explainer comparison.html at the timestamp level.
 
-If --timestamp is not passed, uses the latest explanation run folder.
 Usage:
   uv run python scripts/generate_visualizations.py
-  uv run python scripts/generate_visualizations.py --explainer GNNExplainer
-  uv run python scripts/generate_visualizations.py --explainers GNNExplainer SubgraphX [--timestamp 2026-03-15_133711]
+  uv run python scripts/generate_visualizations.py --explainers GNNEXPL GRADEXPINODE
+  uv run python scripts/generate_visualizations.py --timestamp 2026-03-28_120000
 """
 
 from __future__ import annotations
@@ -41,54 +41,41 @@ from mprov3_explainer import (
     visualizations_run_dir,
 )
 from mprov3_explainer.paths import get_latest_timestamp_dir
-from mprov3_explainer.visualize import draw_molecule_with_mask, write_explanation_index_html
+from mprov3_explainer.visualize import (
+    draw_molecule_with_mask,
+    write_comparison_index_html,
+    write_explanation_index_html,
+)
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate index and graphic explanations from a previous explanation run.",
+        description="Generate visualizations from a previous explanation run.",
     )
     parser.add_argument(
-        "--explainer",
-        type=str,
-        default=None,
+        "--explainer", type=str, default=None,
         help="Single explainer to visualize. Ignored if --explainers is set.",
     )
     parser.add_argument(
-        "--explainers",
-        type=str,
-        nargs="*",
-        default=None,
+        "--explainers", type=str, nargs="*", default=None,
         help=f"Explainers to visualize (default: all: {AVAILABLE_EXPLAINERS}).",
     )
     parser.add_argument(
-        "--timestamp",
-        type=str,
-        default=None,
-        help="Explanation run folder name under results/explanations/ (default: latest).",
+        "--timestamp", type=str, default=None,
+        help="Explanation run folder name (default: latest).",
     )
-    parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="Path to raw MPro snapshot (Ligand/Ligand_SDF/); default from gnn config.",
-    )
-    parser.add_argument(
-        "--results_root",
-        type=str,
-        default=None,
-        help="Root for results (default: mprov3_explainer/results).",
-    )
+    parser.add_argument("--data_root", type=str, default=None)
+    parser.add_argument("--results_root", type=str, default=None)
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
 
-    explainer_names = (
+    explainer_names: list[str] = (
         args.explainers
         if args.explainers
-        else ([args.explainer] if args.explainer is not None else AVAILABLE_EXPLAINERS)
+        else ([args.explainer] if args.explainer is not None else list(AVAILABLE_EXPLAINERS))
     )
     for name in explainer_names:
         validate_explainer(name)
@@ -109,14 +96,11 @@ def main() -> None:
         timestamp_dir = get_latest_timestamp_dir(explanations_base)
         if timestamp_dir is None:
             raise FileNotFoundError(
-                f"No timestamped run found under {explanations_base}. Run run_explanations.py first."
+                f"No timestamped run found under {explanations_base}."
             )
         ts = timestamp_dir.name
 
-    if args.data_root is not None:
-        data_root = Path(args.data_root)
-    else:
-        data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
+    data_root = Path(args.data_root) if args.data_root else _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
     sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
@@ -124,6 +108,15 @@ def main() -> None:
         raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
 
     new_ts = run_timestamp()
+
+    # For cross-explainer comparison grid
+    comparison_data: dict = {
+        "explainers": [],
+        "graph_ids": [],
+        "per_explainer": {},
+        "grid": {},
+    }
+    all_graph_ids: set[str] = set()
 
     for explainer_name in explainer_names:
         explanation_dir = explanations_run_dir(results_root, ts, explainer_name)
@@ -149,6 +142,13 @@ def main() -> None:
         report["source_explanation_timestamp"] = ts
         report["explainer"] = explainer_name
         drawn = 0
+
+        comparison_data["explainers"].append(explainer_name)
+        comparison_data["per_explainer"][explainer_name] = {
+            "mean_fid_plus": report.get("mean_fidelity_plus", 0.0),
+            "mean_fid_minus": report.get("mean_fidelity_minus", 0.0),
+        }
+
         for e in report.get("per_graph", []):
             graph_id = e.get("graph_id", "")
             if not graph_id:
@@ -158,23 +158,46 @@ def main() -> None:
                 print(f"    Skip {graph_id}: mask file not found")
                 continue
             mask_data = json.loads(mask_path.read_text(encoding="utf-8"))
+
             edge_index = mask_data.get("edge_index")
             edge_mask = mask_data.get("edge_mask")
-            if edge_index is None or edge_mask is None:
-                print(f"    Skip {graph_id}: missing edge_index or edge_mask")
+            node_mask = mask_data.get("node_mask")
+
+            if edge_index is None and node_mask is None:
+                print(f"    Skip {graph_id}: no mask data")
                 continue
+
             sdf_path = sdf_dir / f"{graph_id}_ligand.sdf"
             out_png = graphs_dir / f"mask_{graph_id}.png"
-            if draw_molecule_with_mask(sdf_path, edge_index, edge_mask, out_png):
+            if draw_molecule_with_mask(
+                sdf_path,
+                edge_index=edge_index,
+                edge_mask=edge_mask,
+                out_path_png=out_png,
+                node_mask=node_mask,
+            ):
                 drawn += 1
                 print(f"  {explainer_name} / {graph_id} -> {out_png.name}")
+
+            all_graph_ids.add(graph_id)
+            if graph_id not in comparison_data["grid"]:
+                comparison_data["grid"][graph_id] = {}
+            comparison_data["grid"][graph_id][explainer_name] = {
+                "img": f"{explainer_name}/graphs/mask_{graph_id}.png",
+                "fid_plus": e.get("fidelity_plus", 0.0),
+            }
 
         write_explanation_index_html(vis_out, report)
         print(f"\n{explainer_name}: visualizations written to {vis_out}")
         print(f"  Index: {vis_out / 'index.html'}")
         print(f"  Images: {drawn} in {graphs_dir}")
 
-    print(f"\nRun timestamp: {new_ts}")
+    # Write cross-explainer comparison page
+    comparison_data["graph_ids"] = sorted(all_graph_ids)
+    vis_root = results_root / "visualizations" / new_ts
+    write_comparison_index_html(vis_root, comparison_data)
+    print(f"\nComparison page: {vis_root / 'comparison.html'}")
+    print(f"Run timestamp: {new_ts}")
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ from mprov3_gine_explainer_defaults.gine_architecture import (
     DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
 )
-from mprov3_gine_explainer_defaults.pyg_explainer import DEFAULT_EXPLANATION_TYPE, DEFAULT_MODEL_CONFIG
+from mprov3_gine_explainer_defaults.pyg_explainer import DEFAULT_EXPLANATION_TYPE, DEFAULT_MODEL_CONFIG, PHENOMENON_EXPLANATION_TYPE
 from mprov3_gine_explainer_defaults.pyg_mask_types import EDGE_MASK_OBJECT, NODE_MASK_ATTRIBUTES
 from mprov3_gine_explainer_defaults.training_defaults import (
     DEFAULT_BATCH_SIZE,
@@ -93,6 +93,7 @@ __all__ = [
     "DEFAULT_EDGE_DIM",
     "DEFAULT_EXPLANATION_TYPE",
     "DEFAULT_MODEL_CONFIG",
+    "PHENOMENON_EXPLANATION_TYPE",
     "NODE_MASK_ATTRIBUTES",
     "EDGE_MASK_OBJECT",
     "DEFAULT_GNN_EXPLAINER_EPOCHS",

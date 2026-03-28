@@ -1,6 +1,8 @@
 """
 Preprocessing phase for explanation masks (Longa et al. common representation).
 Applied uniformly to any explainer output before metrics: Conversion, Filtering, Normalization.
+
+Supports edge-mask-only, node-mask-only, and mixed explanations.
 """
 
 from __future__ import annotations
@@ -17,8 +19,8 @@ class PreprocessedExplanation:
     """Result of preprocessing: masks + validity for metric aggregation."""
 
     explanation: Explanation
-    valid: bool  # True if instance passes filters (correct-class, non-constant mask)
-    correct_class: bool  # True if pred_class == target_class
+    valid: bool
+    correct_class: bool
 
 
 def edge_mask_to_node_mask(
@@ -66,6 +68,19 @@ def normalize_mask(mask: torch.Tensor) -> torch.Tensor:
     return (mask - min_val) / (max_val - min_val)
 
 
+def reduce_node_mask(node_mask: torch.Tensor) -> torch.Tensor:
+    """Reduce a [N, F] node-feature mask to [N] per-node scores (mean across features)."""
+    if node_mask.dim() == 1:
+        return node_mask
+    return node_mask.abs().mean(dim=-1)
+
+
+def _mask_range(mask: torch.Tensor) -> float:
+    if mask.numel() == 0:
+        return 0.0
+    return (mask.max() - mask.min()).item()
+
+
 def apply_preprocessing(
     explanation: Explanation,
     *,
@@ -78,60 +93,63 @@ def apply_preprocessing(
 ) -> PreprocessedExplanation:
     """
     Apply Conversion (optional), Filtering, Normalization to a raw explanation.
-    Order: Conversion (if requested) -> Filtering -> Normalization.
+    Supports explanations with edge_mask only, node_mask only, or both.
     """
-    edge_mask = explanation.edge_mask
-    if edge_mask is None:
-        return PreprocessedExplanation(
-            explanation=explanation,
-            valid=False,
-            correct_class=False,
-        )
-    edge_mask = edge_mask.detach().float()
+    edge_mask = getattr(explanation, "edge_mask", None)
+    node_mask = getattr(explanation, "node_mask", None)
     edge_index = explanation.edge_index
-    correct_class = pred_class == target_class
 
-    # Filter: correct-class (paper: only evaluate correctly classified instances)
+    if edge_mask is None and node_mask is None:
+        return PreprocessedExplanation(
+            explanation=explanation, valid=False, correct_class=False,
+        )
+
+    correct_class = pred_class == target_class
     valid = True
+
     if correct_class_only:
         valid = valid and correct_class
 
-    # Filter: low-information (paper: discard nearly constant masks)
-    if edge_mask.numel() > 0:
-        rng = (edge_mask.max() - edge_mask.min()).item()
-        if rng < min_mask_range:
+    # Detach to float
+    if edge_mask is not None:
+        edge_mask = edge_mask.detach().float()
+    if node_mask is not None:
+        node_mask = node_mask.detach().float()
+
+    # Low-information filter: check whichever mask is available
+    if edge_mask is not None and edge_mask.numel() > 0:
+        if _mask_range(edge_mask) < min_mask_range:
+            valid = False
+    elif node_mask is not None and node_mask.numel() > 0:
+        flat = reduce_node_mask(node_mask) if node_mask.dim() > 1 else node_mask
+        if _mask_range(flat) < min_mask_range:
             valid = False
 
-    # Optional conversion: edge -> node mask (for protocols that need node-level)
-    if convert_edge_to_node and edge_index is not None:
+    # Optional conversion: edge -> node
+    if convert_edge_to_node and edge_mask is not None and edge_index is not None:
         num_nodes = explanation.x.size(0) if explanation.x is not None else None
-        node_mask = edge_mask_to_node_mask(edge_index, edge_mask, num_nodes=num_nodes)
+        derived_node_mask = edge_mask_to_node_mask(edge_index, edge_mask, num_nodes=num_nodes)
         if normalize:
+            derived_node_mask = normalize_mask(derived_node_mask)
+        if node_mask is None:
+            node_mask = derived_node_mask
+
+    # Normalization
+    if normalize and edge_mask is not None:
+        edge_mask = normalize_mask(edge_mask)
+    if normalize and node_mask is not None:
+        if node_mask.dim() > 1:
+            node_mask = normalize_mask(reduce_node_mask(node_mask))
+        else:
             node_mask = normalize_mask(node_mask)
-        # Build new explanation with node_mask; keep edge_mask normalized too for fidelity
-        if normalize:
-            edge_mask = normalize_mask(edge_mask)
-        new_explanation = Explanation(
-            x=explanation.x,
-            edge_index=explanation.edge_index,
-            edge_mask=edge_mask,
-            node_mask=node_mask,
-        )
-    else:
-        if normalize:
-            edge_mask = normalize_mask(edge_mask)
-        node_out = getattr(explanation, "node_mask", None)
-        if node_out is not None and normalize:
-            node_out = normalize_mask(node_out.detach().float())
-        new_explanation = Explanation(
-            x=explanation.x,
-            edge_index=explanation.edge_index,
-            edge_mask=edge_mask,
-            node_mask=node_out,
-        )
+
+    new_explanation = Explanation(
+        x=explanation.x,
+        edge_index=explanation.edge_index,
+        edge_mask=edge_mask,
+        node_mask=node_mask,
+    )
 
     return PreprocessedExplanation(
-        explanation=new_explanation,
-        valid=valid,
-        correct_class=correct_class,
+        explanation=new_explanation, valid=valid, correct_class=correct_class,
     )
