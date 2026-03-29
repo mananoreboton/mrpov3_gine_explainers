@@ -176,16 +176,17 @@ def _paper_metrics_from_masks(
 
         if bool(keep.any()):
             keep_nodes = all_nodes[keep]
-            sub_ei, sub_edge_mask = subgraph(
+            # PyG returns (edge_index, edge_attr, edge_mask) when return_edge_mask=True.
+            sub_ei, sub_edge_attr, _ = subgraph(
                 keep_nodes,
                 edge_index,
+                edge_attr,
                 relabel_nodes=True,
                 num_nodes=N,
                 return_edge_mask=True,
             )
             sub_x = x[keep_nodes]
             sub_batch = torch.zeros(sub_x.size(0), dtype=torch.long, device=x.device)
-            sub_edge_attr = edge_attr[sub_edge_mask] if edge_attr is not None else None
             exp_prob = _predict_target_proba(
                 model,
                 x=sub_x,
@@ -200,16 +201,16 @@ def _paper_metrics_from_masks(
         comp_keep = ~keep
         if bool(comp_keep.any()):
             comp_nodes = all_nodes[comp_keep]
-            comp_ei, comp_edge_mask = subgraph(
+            comp_ei, comp_edge_attr, _ = subgraph(
                 comp_nodes,
                 edge_index,
+                edge_attr,
                 relabel_nodes=True,
                 num_nodes=N,
                 return_edge_mask=True,
             )
             comp_x = x[comp_nodes]
             comp_batch = torch.zeros(comp_x.size(0), dtype=torch.long, device=x.device)
-            comp_edge_attr = edge_attr[comp_edge_mask] if edge_attr is not None else None
             comp_prob = _predict_target_proba(
                 model,
                 x=comp_x,
