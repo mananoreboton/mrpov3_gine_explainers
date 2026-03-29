@@ -2,7 +2,7 @@
 
 Python pipeline to train a Graph Neural Network on the MPro-URV Version 3 snapshot for **3-class classification** (Category: low / medium / high potency). The codebase is split into configuration, data loading, GINE model, and separate training, validation, and evaluation logic.
 
-**Shared defaults:** Training, fold, GINE architecture, path segment names, **`SplitConfig`**, **`DEFAULT_DATA_ROOT`**, **`DEFAULT_RESULTS_ROOT`**, and sibling project **`Path`**s (**`WORKSPACE_ROOT`**, **`GINE_PROJECT_DIR`**, …) come from **`mprov3_gine_explainer_defaults`** (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is **`MProGNN`** in **`model.py`**.
+**Shared defaults:** Training, fold, GINE architecture, path segment names, `**SplitConfig`**, `**DEFAULT_DATA_ROOT**`, `**DEFAULT_RESULTS_ROOT**`, and sibling project `**Path`s (`WORKSPACE_ROOT**`, `**GINE_PROJECT_DIR**`, …) come from `**mprov3_gine_explainer_defaults**` (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is `**MProGNN**` in `**model.py**`.
 
 ## Overview
 
@@ -22,7 +22,7 @@ flowchart TB
         BuildCLI[build_dataset.py]
     end
 
-    subgraph out_datasets [results/datasets/&lt;ts&gt;/]
+    subgraph out_datasets [results/datasets/<ts>/]
         DataPT[data.pt]
         PdbOrder[pdb_order.txt]
         BuildLog[build.log]
@@ -32,7 +32,7 @@ flowchart TB
         TrainCLI[train.py]
     end
 
-    subgraph out_trainings [results/trainings/&lt;ts&gt;/]
+    subgraph out_trainings [results/trainings/<ts>/]
         BestCkpt[best_gnn.pt]
         TrainLog[train.log]
     end
@@ -41,7 +41,7 @@ flowchart TB
         EvalCLI[evaluate.py]
     end
 
-    subgraph out_classifications [results/classifications/&lt;ts&gt;/]
+    subgraph out_classifications [results/classifications/<ts>/]
         EvalJSON[evaluation_results.json]
         EvalLog[evaluate.log]
     end
@@ -60,7 +60,7 @@ flowchart TB
         VizCLI[visualize_graphs.py]
     end
 
-    subgraph out_viz [results/visualizations/&lt;ts&gt;/]
+    subgraph out_viz [results/visualizations/<ts>/]
         VizPNG[PNG/SVG/HTML]
         VizLog[visualize.log]
     end
@@ -69,7 +69,7 @@ flowchart TB
         CheckInCLI[check_raw_data_format.py]
     end
 
-    subgraph out_check_raw [results/check_format/raw_data/&lt;ts&gt;/]
+    subgraph out_check_raw [results/check_format/raw_data/<ts>/]
         CheckInLog[check_input.log]
     end
 
@@ -77,7 +77,7 @@ flowchart TB
         CheckOutCLI[check_PyG_data_format.py]
     end
 
-    subgraph out_check_ds [results/check_format/datasets/&lt;ts&gt;/]
+    subgraph out_check_ds [results/check_format/datasets/<ts>/]
         CheckOutLog[check_output.log]
     end
 
@@ -120,6 +120,8 @@ flowchart TB
     Splits --> CheckOutCLI
     CheckOutCLI --> CheckOutLog
 ```
+
+
 
 ### Code layout: modules and entry points
 
@@ -188,25 +190,29 @@ flowchart TB
     Dataset --> CheckOutScript
 ```
 
+
+
 ## Data
 
 - **Graphs**: One graph per ligand from `Ligand/Ligand_SDF/*.sdf`. Node features: 3D coordinates (x, y, z) and atomic number. Edges: bonds; edge features: bond type (single=1, double=2, triple=3, aromatic=1.5) for GINE.
-- **Labels**: `Info.csv` provides `pIC50` and `Category` (-1: pIC50&lt;5.5, 0: 5.5≤pIC50&lt;6.5, 1: pIC50≥6.5). Category is mapped to classes 0, 1, 2.
+- **Labels**: `Info.csv` provides `pIC50` and `Category` (-1: pIC50<5.5, 0: 5.5≤pIC50<6.5, 1: pIC50≥6.5). Category is mapped to classes 0, 1, 2.
 
 ## Results layout
 
-All script outputs live under **`results/`** (config: `DEFAULT_RESULTS_ROOT`). Every run writes into a **timestamped subfolder** (`<YYYY-MM-DD_HHMMSS>`). When a script *reads* from results (e.g. train reading the dataset), it uses the **most recent** timestamp folder by default.
+All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`). Every run writes into a **timestamped subfolder** (`<YYYY-MM-DD_HHMMSS>`). When a script *reads* from results (e.g. train reading the dataset), it uses the **most recent** timestamp folder by default.
 
-| Path | Written by | Log file |
-|------|------------|----------|
-| `results/datasets/<timestamp>/` | `build_dataset.py` (`data.pt`, `pdb_order.txt`) | `build.log` |
-| `results/trainings/<timestamp>/` | `train.py` (`best_gnn.pt`) | `train.log` |
-| `results/classifications/<timestamp>/` | `evaluate.py` (`evaluation_results.json`), `create_evaluation_report.py` (HTML, `graphs/`) | `evaluate.log`, `create_evaluation_report.log` |
-| `results/visualizations/<timestamp>/` | `visualize_graphs.py` (PNG/SVG/HTML) | `visualize.log` |
-| `results/check_format/datasets/<timestamp>/` | `check_PyG_data_format.py` (log only) | `check_output.log` |
-| `results/check_format/raw_data/<timestamp>/` | `check_raw_data_format.py` (log only) | `check_input.log` |
 
-Raw input (MPro snapshot with `Info.csv`, `Ligand/`, `Splits/`) stays at `--data_root` (default: `config.DEFAULT_DATA_ROOT`). Splits are always read from that raw root. Shared helpers (timestamps, latest-folder resolution, HTML, run logging) live in **`utils.py`**.
+| Path                                         | Written by                                                                                 | Log file                                       |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `results/datasets/<timestamp>/`              | `build_dataset.py` (`data.pt`, `pdb_order.txt`)                                            | `build.log`                                    |
+| `results/trainings/<timestamp>/`             | `train.py` (`best_gnn.pt`)                                                                 | `train.log`                                    |
+| `results/classifications/<timestamp>/`       | `evaluate.py` (`evaluation_results.json`), `create_evaluation_report.py` (HTML, `graphs/`) | `evaluate.log`, `create_evaluation_report.log` |
+| `results/visualizations/<timestamp>/`        | `visualize_graphs.py` (PNG/SVG/HTML)                                                       | `visualize.log`                                |
+| `results/check_format/datasets/<timestamp>/` | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
+| `results/check_format/raw_data/<timestamp>/` | `check_raw_data_format.py` (log only)                                                      | `check_input.log`                              |
+
+
+Raw input (MPro snapshot with `Info.csv`, `Ligand/`, `Splits/`) stays at `--data_root` (default: `config.DEFAULT_DATA_ROOT`). Splits are always read from that raw root. Shared helpers (timestamps, latest-folder resolution, HTML, run logging) live in `**utils.py`**.
 
 ## Setup
 
@@ -290,7 +296,7 @@ uv run python visualize_graphs.py --pdb_ids 5R83 6LU7
 uv run python visualize_graphs.py --svg
 ```
 
-Output under **`results/visualizations/<timestamp>/`**:
+Output under `**results/visualizations/<timestamp>/**`:
 
 - `PDB_ID.png`: 2D drawing (RDKit MolDraw2D).
 - `PDB_ID.svg`: vector graphic (only with `--svg`).
@@ -306,7 +312,7 @@ Training loads the **latest** `results/datasets/<timestamp>/` and reads splits f
 
 ```bash
 # Default: data_root = config.DEFAULT_DATA_ROOT, latest dataset, output = results/trainings/<timestamp>/
-uv run python train.py
+uv run python visualize_graphs.py
 
 # Custom raw data path (for Splits/)
 uv run python train.py --data_root /path/to/mprov3_data
@@ -382,12 +388,12 @@ uv run python create_evaluation_report.py
 uv run python create_evaluation_report.py --results results/classifications/2025-03-14_120000/evaluation_results.json
 ```
 
-Output is written into the same **`results/classifications/<timestamp>/`** folder as the JSON:
+Output is written into the same `**results/classifications/<timestamp>/**` folder as the JSON:
 
-- **`index.html`**: index page with thumbnail links; each card shows PDB ID, real category, predicted category, and correct/incorrect.
-- **`graphs/<PDB_ID>.png`**: graph image per test sample.
-- **`<PDB_ID>.html`**: per-sample page with image, PDB ID, real category (-1/0/1), predicted category (-1/0/1).
-- **`create_evaluation_report.log`**: run log.
+- `**index.html**`: index page with thumbnail links; each card shows PDB ID, real category, predicted category, and correct/incorrect.
+- `**graphs/<PDB_ID>.png**`: graph image per test sample.
+- `**<PDB_ID>.html**`: per-sample page with image, PDB ID, real category (-1/0/1), predicted category (-1/0/1).
+- `**create_evaluation_report.log**`: run log.
 
 ---
 
@@ -397,28 +403,28 @@ You can reuse configs, loaders, and train/val/test logic in your own scripts.
 
 #### Configuration
 
-- **`SplitConfig`** (from **`mprov3_gine_explainer_defaults`**): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (PyG dataset folder).
-- **Training hyperparameters** (`epochs`, `batch_size`, `lr`, `seed`): defaults from **`mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`, `DEFAULT_SEED`).
-- **`model.MProGNN`**: GINE architecture; construct with hyperparameters (defaults align with **`mprov3_gine_explainer_defaults`** e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
+- `**SplitConfig**` (from `**mprov3_gine_explainer_defaults**`): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (PyG dataset folder).
+- **Training hyperparameters** (`epochs`, `batch_size`, `lr`, `seed`): defaults from `**mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`, `DEFAULT_SEED`).
+- `**model.MProGNN**`: GINE architecture; construct with hyperparameters (defaults align with `**mprov3_gine_explainer_defaults**` e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
 
 #### Data loaders
 
-- **`loaders.collate_batch(batch)`**: collate list of PyG graphs into a batch (includes category labels; pIC50 still in data for reference).
-- **`loaders.create_data_loaders(dataset_root, data_root, split_config, batch_size=32)`**: loads the PyG dataset from `dataset_root/split_config.dataset_name` (e.g. `results/datasets/<timestamp>`) and returns `(train_loader, val_loader, test_loader)` using split files from `data_root/Splits/` and `fold_index`.
+- `**loaders.collate_batch(batch)**`: collate list of PyG graphs into a batch (includes category labels; pIC50 still in data for reference).
+- `**loaders.create_data_loaders(dataset_root, data_root, split_config, batch_size=32)**`: loads the PyG dataset from `dataset_root/split_config.dataset_name` (e.g. `results/datasets/<timestamp>`) and returns `(train_loader, val_loader, test_loader)` using split files from `data_root/Splits/` and `fold_index`.
 
 #### Training
 
-- **`train_epoch.train_one_epoch(model, loader, optimizer, device, criterion_ce)`**: one training epoch (cross-entropy); returns mean loss.
+- `**train_epoch.train_one_epoch(model, loader, optimizer, device, criterion_ce)**`: one training epoch (cross-entropy); returns mean loss.
 
 #### Validation
 
-- **`validation.evaluate_validation(model, loader, device)`**: returns **`ValidationMetrics`** (`accuracy`).
+- `**validation.evaluate_validation(model, loader, device)**`: returns `**ValidationMetrics**` (`accuracy`).
 
 #### Evaluation
 
-- **`evaluation.evaluate_test(model, loader, device)`**: returns **`TestMetrics`** (`accuracy`).
-- **`evaluation.evaluate_test_with_predictions(model, loader, device)`**: returns **`(TestMetrics, list of (pdb_id, real_category, pred_category))`** with categories in original scale (-1, 0, 1).
-- **`evaluation.print_test_report(metrics)`**: prints test accuracy.
+- `**evaluation.evaluate_test(model, loader, device)**`: returns `**TestMetrics**` (`accuracy`).
+- `**evaluation.evaluate_test_with_predictions(model, loader, device)**`: returns `**(TestMetrics, list of (pdb_id, real_category, pred_category))**` with categories in original scale (-1, 0, 1).
+- `**evaluation.print_test_report(metrics)**`: prints test accuracy.
 
 #### Example script
 
@@ -490,19 +496,22 @@ print_test_report(test_metrics)
 
 ## Layout
 
-| File | Role |
-|------|------|
-| **model.py** | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`). |
-| **dataset.py** | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
-| **utils.py** | `run_timestamp()`, `get_latest_timestamp_dir()`, `html_escape()`, `html_document()`, `RunLogger` (tee to file + stdout). |
-| **build_dataset.py** | Builds PyG dataset to `results/datasets/<timestamp>/` (no dataset_name); writes `build.log`. |
-| **check_raw_data_format.py** | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/<timestamp>/check_input.log`. |
-| **check_PyG_data_format.py** | CLI: validate built dataset (default: latest `results/datasets/<timestamp>/`); writes `results/check_format/datasets/<timestamp>/check_output.log`. |
-| **loaders.py** | `collate_batch`, `create_data_loaders(dataset_root, data_root, ...)` (dataset under `results/datasets/`, splits from raw root). |
-| **train_epoch.py** | One-epoch training step: `train_one_epoch`. |
-| **validation.py** | Validation: `evaluate_validation`, `ValidationMetrics`. |
-| **evaluation.py** | Evaluation: `evaluate_test`, `TestMetrics`, `print_test_report`. |
-| **train.py** | CLI: load latest `results/datasets/<timestamp>/`, train; save to `results/trainings/<timestamp>/` and `train.log`. |
-| **evaluate.py** | CLI: load checkpoint from latest `results/trainings/<timestamp>/`, evaluate; save to `results/classifications/<timestamp>/` and `evaluate.log`. |
-| **create_evaluation_report.py** | CLI: read latest `results/classifications/<timestamp>/evaluation_results.json`, write HTML report into that folder; `create_evaluation_report.log`. |
-| **visualize_graphs.py** | CLI: read latest `results/datasets/<timestamp>/`, write to `results/visualizations/<timestamp>/` and `visualize.log`; uses `utils` HTML helpers. |
+
+| File                            | Role                                                                                                                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **model.py**                    | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`).                                                                                        |
+| **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
+| **utils.py**                    | `run_timestamp()`, `get_latest_timestamp_dir()`, `html_escape()`, `html_document()`, `RunLogger` (tee to file + stdout).                                                            |
+| **build_dataset.py**            | Builds PyG dataset to `results/datasets/<timestamp>/` (no dataset_name); writes `build.log`.                                                                                        |
+| **check_raw_data_format.py**    | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/<timestamp>/check_input.log`.                                                                     |
+| **check_PyG_data_format.py**    | CLI: validate built dataset (default: latest `results/datasets/<timestamp>/`); writes `results/check_format/datasets/<timestamp>/check_output.log`.                                 |
+| **loaders.py**                  | `collate_batch`, `create_data_loaders(dataset_root, data_root, ...)` (dataset under `results/datasets/`, splits from raw root).                                                     |
+| **train_epoch.py**              | One-epoch training step: `train_one_epoch`.                                                                                                                                         |
+| **validation.py**               | Validation: `evaluate_validation`, `ValidationMetrics`.                                                                                                                             |
+| **evaluation.py**               | Evaluation: `evaluate_test`, `TestMetrics`, `print_test_report`.                                                                                                                    |
+| **train.py**                    | CLI: load latest `results/datasets/<timestamp>/`, train; save to `results/trainings/<timestamp>/` and `train.log`.                                                                  |
+| **evaluate.py**                 | CLI: load checkpoint from latest `results/trainings/<timestamp>/`, evaluate; save to `results/classifications/<timestamp>/` and `evaluate.log`.                                     |
+| **create_evaluation_report.py** | CLI: read latest `results/classifications/<timestamp>/evaluation_results.json`, write HTML report into that folder; `create_evaluation_report.log`.                                 |
+| **visualize_graphs.py**         | CLI: read latest `results/datasets/<timestamp>/`, write to `results/visualizations/<timestamp>/` and `visualize.log`; uses `utils` HTML helpers.                                    |
+
+
