@@ -149,8 +149,11 @@ def _parse_args() -> argparse.Namespace:
 
     # Preprocessing
     parser.add_argument("--no_preprocessing", action="store_true")
-    parser.add_argument("--no_correct_class_only", action="store_true")
-    parser.add_argument("--min_mask_range", type=float, default=1e-3)
+    parser.add_argument(
+        "--no_correct_class_only",
+        action="store_true",
+        help="Include misclassified graphs in preprocessing validity (default: only correctly classified).",
+    )
     parser.add_argument("--fidelity_valid_only", action="store_true")
 
     return parser.parse_args()
@@ -257,7 +260,6 @@ def main() -> None:
             get_graph_id=_get_graph_id,
             apply_preprocessing_flag=not args.no_preprocessing,
             correct_class_only=not args.no_correct_class_only,
-            min_mask_range=args.min_mask_range,
             train_loader=train_loader if spec.needs_training else None,
             pg_train_max_graphs=pg_train_cap if explainer_name == "PGEXPL" else None,
             **explainer_kwargs,

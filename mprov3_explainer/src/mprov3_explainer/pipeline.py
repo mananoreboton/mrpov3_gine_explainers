@@ -210,7 +210,6 @@ def run_explanations(
     get_graph_id: Optional[Callable[..., str]] = None,
     apply_preprocessing_flag: bool = True,
     correct_class_only: bool = True,
-    min_mask_range: float = 1e-3,
     train_loader: Optional[Any] = None,
     pg_train_max_graphs: Optional[int] = None,
     **explainer_kwargs: Any,
@@ -290,7 +289,6 @@ def run_explanations(
                     pred_class=pred_class,
                     target_class=target_class,
                     correct_class_only=correct_class_only,
-                    min_mask_range=min_mask_range,
                     normalize=True,
                     convert_edge_to_node=False,
                 )

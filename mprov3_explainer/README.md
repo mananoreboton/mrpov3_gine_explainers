@@ -13,7 +13,7 @@ Outputs are written under **`results/<explanations|visualizations>/<timestamp>/<
 5. **Phase 1 – Masks generation** – For each graph: call explainer → raw `Explanation` (`edge_mask` and/or `node_mask`, depending on the method).
 6. **Phase 2 – Preprocessing** (optional, on by default):
    - **Conversion** – Optional edge-mask → node-mask (e.g. mean incident weights per node) for protocols that need it.
-   - **Filtering** – Restrict to **correctly classified** instances; discard **nearly constant** masks (max − min &lt; `--min_mask_range`).
+   - **Filtering** – Restrict to **correctly classified** instances (use `--no_correct_class_only` to include misclassified).
    - **Normalization** – Scale mask to [0, 1] per instance.
    - Mask tensors are **canonicalized** (e.g. stray batch dims, `(F, N)` vs `(N, F)`, degenerate square layouts) so downstream metrics and fidelity behave consistently.
 7. **Phase 3 – Metrics** – Fidelity (fid+, fid−) on the **preprocessed** explanation. For fidelity, node masks are reshaped so `mask * node_features` matches PyTorch broadcasting (per-node `(N,)` masks are expanded to `(N, 1)` when needed).
@@ -132,6 +132,6 @@ Images require SDF files at `data_root/Ligand/Ligand_SDF/&lt;pdb_id&gt;_ligand.s
 - `--pg_train_max_graphs` – max training graphs per epoch for PGExplainer; if omitted and `--max_graphs` is set, a subsample cap is applied so PG training is not disproportionately slow
 - `--ig_n_steps` – Integrated Gradients steps for **IGNODE** / **IGEDGE**
 - `--pgm_num_samples` – PGMExplainer perturbation samples
-- **Preprocessing (Longa et al.):** `--no_preprocessing` disable conversion/filtering/normalization; `--no_correct_class_only` include misclassified in averaging; `--min_mask_range` (default 1e-3) min mask range to keep; `--fidelity_valid_only` report mean fidelity only over valid instances
+- **Preprocessing (Longa et al.):** `--no_preprocessing` disable conversion/filtering/normalization; `--no_correct_class_only` include misclassified in averaging; `--fidelity_valid_only` report mean fidelity only over valid instances
 
 Plausibility (AUROC) is only computed when a ground-truth explanation mask is supplied (e.g. via a custom callback in the pipeline); the script does not provide one by default.

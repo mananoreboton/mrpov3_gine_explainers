@@ -102,19 +102,13 @@ def _align_node_mask_to_graph(node_mask: torch.Tensor, x: torch.Tensor) -> torch
     return m
 
 
-def _mask_range(mask: torch.Tensor) -> float:
-    if mask.numel() == 0:
-        return 0.0
-    return (mask.max() - mask.min()).item()
-
-
 def apply_preprocessing(
     explanation: Explanation,
     *,
     pred_class: int,
     target_class: int,
+    # When True, explanations for misclassified graphs are marked invalid (metrics / aggregation only over correct).
     correct_class_only: bool = True,
-    min_mask_range: float = 1e-3,
     normalize: bool = True,
     convert_edge_to_node: bool = False,
 ) -> PreprocessedExplanation:
@@ -144,15 +138,6 @@ def apply_preprocessing(
         node_mask = node_mask.detach().float()
         if explanation.x is not None:
             node_mask = _align_node_mask_to_graph(node_mask, explanation.x)
-
-    # Low-information filter: check whichever mask is available
-    if edge_mask is not None and edge_mask.numel() > 0:
-        if _mask_range(edge_mask) < min_mask_range:
-            valid = False
-    elif node_mask is not None and node_mask.numel() > 0:
-        flat = reduce_node_mask(node_mask) if node_mask.dim() > 1 else node_mask
-        if _mask_range(flat) < min_mask_range:
-            valid = False
 
     # Optional conversion: edge -> node
     if convert_edge_to_node and edge_mask is not None and edge_index is not None:
