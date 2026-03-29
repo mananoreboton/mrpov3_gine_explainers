@@ -28,6 +28,8 @@ from mprov3_gine_explainer_defaults import (
 from torch_geometric.explain import Explainer, Explanation
 from torch_geometric.explain.algorithm import GNNExplainer, PGExplainer
 
+from mprov3_explainer.captum_leaf_explainer import LeafInputCaptumExplainer
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -78,11 +80,9 @@ def _build_gradexp_node(
     **kwargs: Any,
 ) -> Explainer:
     """Saliency (abs gradients) over node features."""
-    from torch_geometric.explain.algorithm import CaptumExplainer
-
     return Explainer(
         model=model,
-        algorithm=CaptumExplainer("Saliency"),
+        algorithm=LeafInputCaptumExplainer("Saliency"),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
         node_mask_type=NODE_MASK_ATTRIBUTES,
         edge_mask_type=None,
@@ -97,11 +97,9 @@ def _build_gradexp_edge(
     **kwargs: Any,
 ) -> Explainer:
     """Saliency (abs gradients) over edge mask."""
-    from torch_geometric.explain.algorithm import CaptumExplainer
-
     return Explainer(
         model=model,
-        algorithm=CaptumExplainer("Saliency"),
+        algorithm=LeafInputCaptumExplainer("Saliency"),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
         node_mask_type=None,
         edge_mask_type=EDGE_MASK_OBJECT,
@@ -116,15 +114,13 @@ def _build_guided_bp(
     **kwargs: Any,
 ) -> Explainer:
     """GuidedBackprop over node features (Captum hook-based)."""
-    from torch_geometric.explain.algorithm import CaptumExplainer
-
     _LOG.warning(
         "GuidedBackprop requires nn.ReLU modules; functional .relu() calls "
         "in the model will NOT be hooked. Results may be incomplete."
     )
     return Explainer(
         model=model,
-        algorithm=CaptumExplainer("GuidedBackprop"),
+        algorithm=LeafInputCaptumExplainer("GuidedBackprop"),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
         node_mask_type=NODE_MASK_ATTRIBUTES,
         edge_mask_type=None,
