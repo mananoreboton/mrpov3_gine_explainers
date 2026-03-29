@@ -17,13 +17,16 @@ from typing import Any, Callable, Iterator, Optional
 
 import torch
 from torch_geometric.explain import Explanation
-from torch_geometric.explain.metric import fidelity
+from torch_geometric.explain.metric import characterization_score, fidelity
+from torch_geometric.utils import subgraph
 
 from mprov3_explainer.explainers import ExplainerSpec, get_spec
 from mprov3_explainer.preprocessing import (
     PreprocessedExplanation,
     _align_node_mask_to_graph,
     apply_preprocessing,
+    edge_mask_to_node_mask,
+    normalize_mask,
     reduce_node_mask,
 )
 
@@ -57,6 +60,10 @@ class ExplanationResult:
     explanation: Explanation
     fidelity_fid_plus: float
     fidelity_fid_minus: float
+    paper_sufficiency: float = 0.0
+    paper_comprehensiveness: float = 0.0
+    paper_f1_fidelity: float = 0.0
+    pyg_characterization: float = 0.0
     valid: bool = True
     correct_class: bool = True
     has_node_mask: bool = False
@@ -92,6 +99,137 @@ def _get_target_class(data: Any) -> Optional[int]:
     if hasattr(c, "item"):
         return int(c.item())
     return int(c)
+
+
+def _predict_target_proba(
+    model: torch.nn.Module,
+    *,
+    x: torch.Tensor,
+    edge_index: torch.Tensor,
+    batch: torch.Tensor,
+    edge_attr: Optional[torch.Tensor],
+    target_class: int,
+) -> float:
+    with torch.no_grad():
+        logits = model(x, edge_index, batch, edge_attr)
+        probs = torch.softmax(logits, dim=-1)
+        return float(probs.squeeze(0)[target_class].item())
+
+
+def _paper_metrics_from_masks(
+    model: torch.nn.Module,
+    explanation: Explanation,
+    *,
+    target_class: int,
+    n_thresholds: int = 100,
+) -> tuple[float, float, float]:
+    """
+    Longa et al. (2025) graph classification fidelity metrics:
+    Fsuf, Fcom, and F1-fidelity computed via threshold sweeping over hard masks.
+    """
+    x = explanation.x
+    edge_index = explanation.edge_index
+    if x is None or edge_index is None:
+        return 0.0, 0.0, 0.0
+
+    batch = explanation.get("batch")
+    if batch is None:
+        batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+    edge_attr = explanation.get("edge_attr")
+
+    node_mask = explanation.get("node_mask")
+    edge_mask = explanation.get("edge_mask")
+
+    if node_mask is None and edge_mask is not None:
+        node_mask = edge_mask_to_node_mask(edge_index, edge_mask, num_nodes=int(x.size(0)))
+        node_mask = normalize_mask(node_mask)
+    elif node_mask is not None:
+        node_mask = _align_node_mask_to_graph(node_mask.detach().float(), x)
+        node_mask = reduce_node_mask(node_mask) if node_mask.dim() > 1 else node_mask
+        node_mask = normalize_mask(node_mask)
+    else:
+        return 0.0, 0.0, 0.0
+
+    full_prob = _predict_target_proba(
+        model,
+        x=x,
+        edge_index=edge_index,
+        batch=batch,
+        edge_attr=edge_attr,
+        target_class=target_class,
+    )
+
+    Nt = int(n_thresholds)
+    if Nt <= 1:
+        return 0.0, 0.0, 0.0
+
+    suf_sum = 0.0
+    com_sum = 0.0
+    denom = float(Nt - 1)
+
+    N = int(x.size(0))
+    all_nodes = torch.arange(N, device=x.device)
+
+    for k in range(1, Nt):
+        t = float(k) / float(Nt)
+        keep = node_mask > t
+
+        if bool(keep.any()):
+            keep_nodes = all_nodes[keep]
+            sub_ei, sub_edge_mask = subgraph(
+                keep_nodes,
+                edge_index,
+                relabel_nodes=True,
+                num_nodes=N,
+                return_edge_mask=True,
+            )
+            sub_x = x[keep_nodes]
+            sub_batch = torch.zeros(sub_x.size(0), dtype=torch.long, device=x.device)
+            sub_edge_attr = edge_attr[sub_edge_mask] if edge_attr is not None else None
+            exp_prob = _predict_target_proba(
+                model,
+                x=sub_x,
+                edge_index=sub_ei,
+                batch=sub_batch,
+                edge_attr=sub_edge_attr,
+                target_class=target_class,
+            )
+        else:
+            exp_prob = 0.0
+
+        comp_keep = ~keep
+        if bool(comp_keep.any()):
+            comp_nodes = all_nodes[comp_keep]
+            comp_ei, comp_edge_mask = subgraph(
+                comp_nodes,
+                edge_index,
+                relabel_nodes=True,
+                num_nodes=N,
+                return_edge_mask=True,
+            )
+            comp_x = x[comp_nodes]
+            comp_batch = torch.zeros(comp_x.size(0), dtype=torch.long, device=x.device)
+            comp_edge_attr = edge_attr[comp_edge_mask] if edge_attr is not None else None
+            comp_prob = _predict_target_proba(
+                model,
+                x=comp_x,
+                edge_index=comp_ei,
+                batch=comp_batch,
+                edge_attr=comp_edge_attr,
+                target_class=target_class,
+            )
+        else:
+            comp_prob = 0.0
+
+        suf_sum += (full_prob - exp_prob)
+        com_sum += (full_prob - comp_prob)
+
+    Fsuf = suf_sum / denom
+    Fcom = com_sum / denom
+    num = 2.0 * (1.0 - Fsuf) * Fcom
+    den = (1.0 - Fsuf) + Fcom
+    Ff1 = (num / den) if abs(den) > 1e-12 else 0.0
+    return float(Fsuf), float(Fcom), float(Ff1)
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +350,8 @@ def run_explanations(
     correct_class_only: bool = True,
     train_loader: Optional[Any] = None,
     pg_train_max_graphs: Optional[int] = None,
+    paper_metrics: bool = True,
+    paper_n_thresholds: int = 100,
     **explainer_kwargs: Any,
 ) -> Iterator[ExplanationResult]:
     """Generate graph-level explanations, preprocess, then compute fidelity.
@@ -328,11 +468,54 @@ def run_explanations(
                 fid_plus = 0.0
                 fid_minus = 0.0
 
+            # PyG/GraphFramEx: characterization score combines (fid+, fid-)
+            try:
+                pyg_char = float(
+                    characterization_score(
+                        torch.tensor(fid_plus, device=device),
+                        torch.tensor(fid_minus, device=device),
+                        pos_weight=0.5,
+                        neg_weight=0.5,
+                    ).item()
+                )
+            except Exception as exc:
+                _LOG.warning(
+                    "characterization_score failed for %s / %s: %s",
+                    explainer_name,
+                    graph_id,
+                    exc,
+                )
+                pyg_char = 0.0
+
+            # Paper metrics (Longa et al.): threshold-sweep probability drops
+            if paper_metrics:
+                try:
+                    paper_suf, paper_com, paper_f1 = _paper_metrics_from_masks(
+                        model,
+                        explanation,
+                        target_class=int(target_class),
+                        n_thresholds=paper_n_thresholds,
+                    )
+                except Exception as exc:
+                    _LOG.warning(
+                        "Paper metrics failed for %s / %s: %s",
+                        explainer_name,
+                        graph_id,
+                        exc,
+                    )
+                    paper_suf, paper_com, paper_f1 = 0.0, 0.0, 0.0
+            else:
+                paper_suf, paper_com, paper_f1 = 0.0, 0.0, 0.0
+
             yield ExplanationResult(
                 graph_id=graph_id,
                 explanation=explanation,
                 fidelity_fid_plus=fid_plus,
                 fidelity_fid_minus=fid_minus,
+                paper_sufficiency=paper_suf,
+                paper_comprehensiveness=paper_com,
+                paper_f1_fidelity=paper_f1,
+                pyg_characterization=pyg_char,
                 valid=valid,
                 correct_class=correct_class,
                 has_node_mask=has_node_mask,

@@ -16,7 +16,10 @@ Outputs are written under **`results/<explanations|visualizations>/<timestamp>/<
    - **Filtering** – Restrict to **correctly classified** instances (use `--no_correct_class_only` to include misclassified).
    - **Normalization** – Scale mask to [0, 1] per instance.
    - Mask tensors are **canonicalized** (e.g. stray batch dims, `(F, N)` vs `(N, F)`, degenerate square layouts) so downstream metrics and fidelity behave consistently.
-7. **Phase 3 – Metrics** – Fidelity (fid+, fid−) on the **preprocessed** explanation. For fidelity, node masks are reshaped so `mask * node_features` matches PyTorch broadcasting (per-node `(N,)` masks are expanded to `(N, 1)` when needed).
+7. **Phase 3 – Metrics** – Two fidelity tracks are computed on the **preprocessed** explanation:
+   - **PyG/GraphFramEx**: fidelity (fid+, fid−) plus `characterization_score` (harmonic-mean style combine of fid+/fid−).
+   - **Longa et al. (paper)**: **Sufficiency (Fsuf)**, **Comprehensiveness (Fcom)**, and **F1-fidelity (Ff1)** computed via a threshold sweep (Nt=100) over hard masks, by re-running the model on the explanation subgraph and its complement.
+   For PyG fidelity, node masks are reshaped so `mask * node_features` matches PyTorch broadcasting (per-node `(N,)` masks are expanded to `(N, 1)` when needed).
 8. **Report and masks** – Write `explanation_report.json` and per-graph `masks/<pdb_id>.json` (preprocessed masks).
 
 ## Input
@@ -32,7 +35,11 @@ Model and split args (e.g. `--fold_index`, `--hidden`, `--num_layers`) must matc
 
 - **Stdout** – Per-graph line: `graph_id: fid+=... fid-=... [excluded]`; then mean fidelity and graph counts (total and valid).
 - **results/explanations/&lt;timestamp&gt;/&lt;explainer&gt;/** (inside mprov3_explainer; timestamp is execution time in UTC):
-  - `explanation_report.json` – `mean_fidelity_plus`, `mean_fidelity_minus`, `num_graphs`, `num_valid`, `explainer`, and `per_graph` (graph_id, fidelity, valid, correct_class).
+  - `explanation_report.json` – includes:
+    - `mean_fidelity_plus`, `mean_fidelity_minus`
+    - `mean_pyg_characterization`
+    - `mean_paper_sufficiency`, `mean_paper_comprehensiveness`, `mean_paper_f1_fidelity`
+    - `num_graphs`, `num_valid`, `explainer`, and `per_graph` entries with the per-graph counterparts.
   - `masks/&lt;pdb_id&gt;.json` – per-graph `edge_index` and preprocessed `edge_mask` and/or `node_mask` (depending on the explainer).
 
 ## Available explainers (registry)
@@ -50,7 +57,7 @@ Default **`--explainers`** (or no flag) runs all of:
 | **PGEXPL** | PGExplainer (phenomenon; **train** MLP on train loader, then explain) |
 | **PGMEXPL** | PGMExplainer (node masks; statistical test) |
 
-**SubgraphX (DIG)** is still implemented in code for manual use but is **not** registered in `AVAILABLE_EXPLAINERS`; see `explainers.py` and `scripts/test_subgraphx_import.py` if you need it.
+**SubgraphX (SubX, DIG)** is **not** supported in this pipeline: it is not in `AVAILABLE_EXPLAINERS` and there is no bundled adapter or test script.
 
 ### Implementation notes
 
@@ -86,6 +93,21 @@ uv run python scripts/run_explanations.py --max_graphs 10
 ```
 
 `--max_graphs` limits **evaluation** on the test loader. For **PGEXPL**, if you also want a shorter **training** phase, set `--pg_train_max_graphs` (or use the automatic cap when `--max_graphs` is set).
+
+### Paper metrics (Longa et al.: Fsuf, Fcom, Ff1)
+
+By default the script computes **paper** sufficiency / comprehensiveness / F1-fidelity via a threshold sweep (costly: many extra forward passes per graph). PyG **fid+**, **fid−**, and **characterization** are always computed.
+
+```bash
+# Skip paper metrics (faster; reports still include paper fields as zeros)
+uv run python scripts/run_explanations.py --no_paper_metrics
+
+# Fewer threshold steps (faster, less faithful to Nt=100 in the paper)
+uv run python scripts/run_explanations.py --paper_n_thresholds 25
+
+# Re-enable explicitly after combining with other flags (default is already on)
+uv run python scripts/run_explanations.py --paper_metrics --paper_n_thresholds 100
+```
 
 ### Custom paths
 
@@ -133,5 +155,6 @@ Images require SDF files at `data_root/Ligand/Ligand_SDF/&lt;pdb_id&gt;_ligand.s
 - `--ig_n_steps` – Integrated Gradients steps for **IGNODE** / **IGEDGE**
 - `--pgm_num_samples` – PGMExplainer perturbation samples
 - **Preprocessing (Longa et al.):** `--no_preprocessing` disable conversion/filtering/normalization; `--no_correct_class_only` include misclassified in averaging; `--fidelity_valid_only` report mean fidelity only over valid instances
+- **Paper metrics:** `--paper_metrics` / `--no_paper_metrics` (default: **on**); `--paper_n_thresholds` (default: **100**, sweep uses k = 1 … Nt−1)
 
 Plausibility (AUROC) is only computed when a ground-truth explanation mask is supplied (e.g. via a custom callback in the pipeline); the script does not provide one by default.

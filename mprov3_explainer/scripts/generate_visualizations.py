@@ -187,6 +187,10 @@ def main() -> None:
         comparison_data["per_explainer"][explainer_name] = {
             "mean_fid_plus": report.get("mean_fidelity_plus", 0.0),
             "mean_fid_minus": report.get("mean_fidelity_minus", 0.0),
+            "mean_pyg_characterization": report.get("mean_pyg_characterization", 0.0),
+            "mean_paper_sufficiency": report.get("mean_paper_sufficiency", 0.0),
+            "mean_paper_comprehensiveness": report.get("mean_paper_comprehensiveness", 0.0),
+            "mean_paper_f1_fidelity": report.get("mean_paper_f1_fidelity", 0.0),
         }
 
         for e in report.get("per_graph", []):
@@ -225,6 +229,8 @@ def main() -> None:
             comparison_data["grid"][graph_id][explainer_name] = {
                 "img": f"{explainer_name}/graphs/mask_{graph_id}.png",
                 "fid_plus": e.get("fidelity_plus", 0.0),
+                "fid_minus": e.get("fidelity_minus", 0.0),
+                "paper_f1_fidelity": e.get("paper_f1_fidelity", 0.0),
             }
 
         write_explanation_index_html(vis_out, report)

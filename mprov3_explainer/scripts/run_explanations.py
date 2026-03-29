@@ -156,6 +156,26 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--fidelity_valid_only", action="store_true")
 
+    # Paper metrics (Longa et al.): threshold-sweep Fsuf / Fcom / Ff1
+    parser.set_defaults(paper_metrics=True)
+    parser.add_argument(
+        "--paper_metrics",
+        action="store_true",
+        help="Compute paper sufficiency / comprehensiveness / F1-fidelity (default: on).",
+    )
+    parser.add_argument(
+        "--no_paper_metrics",
+        action="store_false",
+        dest="paper_metrics",
+        help="Skip paper metrics (faster; PyG fid+ / fid- / characterization still computed).",
+    )
+    parser.add_argument(
+        "--paper_n_thresholds",
+        type=int,
+        default=100,
+        help="Number of threshold levels Nt for paper metrics sweep (default: 100, paper uses k=1..Nt-1).",
+    )
+
     return parser.parse_args()
 
 
@@ -262,12 +282,18 @@ def main() -> None:
             correct_class_only=not args.no_correct_class_only,
             train_loader=train_loader if spec.needs_training else None,
             pg_train_max_graphs=pg_train_cap if explainer_name == "PGEXPL" else None,
+            paper_metrics=args.paper_metrics,
+            paper_n_thresholds=args.paper_n_thresholds,
             **explainer_kwargs,
         ):
             results.append(result)
             print(
                 f"  {result.graph_id}: fid+={result.fidelity_fid_plus:.4f} "
                 f"fid-={result.fidelity_fid_minus:.4f}"
+                f" char={result.pyg_characterization:.4f}"
+                f" Fsuf={result.paper_sufficiency:.4f}"
+                f" Fcom={result.paper_comprehensiveness:.4f}"
+                f" Ff1={result.paper_f1_fidelity:.4f}"
                 + ("" if result.valid else " [excluded]")
                 + (f" ({result.elapsed_s:.2f}s)" if result.elapsed_s > 0 else "")
             )
@@ -276,9 +302,17 @@ def main() -> None:
         mean_fid_plus, mean_fid_minus = aggregate_fidelity(
             results, valid_only=args.fidelity_valid_only,
         )
+        mean_char = sum(r.pyg_characterization for r in results) / len(results) if results else 0.0
+        mean_fsuf = sum(r.paper_sufficiency for r in results) / len(results) if results else 0.0
+        mean_fcom = sum(r.paper_comprehensiveness for r in results) / len(results) if results else 0.0
+        mean_ff1 = sum(r.paper_f1_fidelity for r in results) / len(results) if results else 0.0
         n_valid = sum(1 for r in results if r.valid)
         print(f"Mean fidelity (fid+): {mean_fid_plus:.4f}")
         print(f"Mean fidelity (fid-): {mean_fid_minus:.4f}")
+        print(f"Mean characterization (PyG): {mean_char:.4f}")
+        print(f"Mean paper sufficiency (Fsuf): {mean_fsuf:.4f}")
+        print(f"Mean paper comprehensiveness (Fcom): {mean_fcom:.4f}")
+        print(f"Mean paper F1-fidelity (Ff1): {mean_ff1:.4f}")
         print(f"Explained {len(results)} graphs ({n_valid} valid) in {wall_time:.1f}s.")
 
         # Save per-explainer report + masks
@@ -291,6 +325,10 @@ def main() -> None:
                 "graph_id": r.graph_id,
                 "fidelity_plus": r.fidelity_fid_plus,
                 "fidelity_minus": r.fidelity_fid_minus,
+                "pyg_characterization": r.pyg_characterization,
+                "paper_sufficiency": r.paper_sufficiency,
+                "paper_comprehensiveness": r.paper_comprehensiveness,
+                "paper_f1_fidelity": r.paper_f1_fidelity,
                 "valid": r.valid,
                 "correct_class": r.correct_class,
                 "has_node_mask": r.has_node_mask,
@@ -301,6 +339,10 @@ def main() -> None:
         report = {
             "mean_fidelity_plus": mean_fid_plus,
             "mean_fidelity_minus": mean_fid_minus,
+            "mean_pyg_characterization": mean_char,
+            "mean_paper_sufficiency": mean_fsuf,
+            "mean_paper_comprehensiveness": mean_fcom,
+            "mean_paper_f1_fidelity": mean_ff1,
             "num_graphs": len(results),
             "num_valid": n_valid,
             "explainer": explainer_name,
@@ -341,6 +383,10 @@ def main() -> None:
         all_summaries[explainer_name] = {
             "mean_fid_plus": mean_fid_plus,
             "mean_fid_minus": mean_fid_minus,
+            "mean_pyg_characterization": mean_char,
+            "mean_paper_sufficiency": mean_fsuf,
+            "mean_paper_comprehensiveness": mean_fcom,
+            "mean_paper_f1_fidelity": mean_ff1,
             "num_graphs": len(results),
             "num_valid": n_valid,
             "wall_time_s": wall_time,

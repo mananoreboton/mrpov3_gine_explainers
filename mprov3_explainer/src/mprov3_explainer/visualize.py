@@ -205,6 +205,10 @@ def write_explanation_index_html(out_path: Path, report_dict: Dict[str, Any]) ->
     """Write index.html with summary and per-graph cards."""
     mean_fid_plus = report_dict.get("mean_fidelity_plus", 0.0)
     mean_fid_minus = report_dict.get("mean_fidelity_minus", 0.0)
+    mean_char = report_dict.get("mean_pyg_characterization", 0.0)
+    mean_fsuf = report_dict.get("mean_paper_sufficiency", 0.0)
+    mean_fcom = report_dict.get("mean_paper_comprehensiveness", 0.0)
+    mean_ff1 = report_dict.get("mean_paper_f1_fidelity", 0.0)
     num_graphs = report_dict.get("num_graphs", 0)
     per_graph = report_dict.get("per_graph", [])
     source_ts = report_dict.get("source_explanation_timestamp", "")
@@ -224,6 +228,10 @@ def write_explanation_index_html(out_path: Path, report_dict: Dict[str, Any]) ->
         f"<p class='timestamp'>Source explanation run: {_html_escape(source_ts)}</p>",
         f"<p><strong>Mean fidelity (fid+)</strong>: {mean_fid_plus:.4f} &nbsp; "
         f"<strong>Mean fidelity (fid&minus;)</strong>: {mean_fid_minus:.4f} &nbsp; "
+        f"<strong>Char (PyG)</strong>: {mean_char:.4f} &nbsp; "
+        f"<strong>Fsuf</strong>: {mean_fsuf:.4f} &nbsp; "
+        f"<strong>Fcom</strong>: {mean_fcom:.4f} &nbsp; "
+        f"<strong>Ff1</strong>: {mean_ff1:.4f} &nbsp; "
         f"<strong>Graphs</strong>: {num_graphs}</p>",
         "<div class='grid'>",
     ]
@@ -231,13 +239,21 @@ def write_explanation_index_html(out_path: Path, report_dict: Dict[str, Any]) ->
         graph_id = e.get("graph_id", "?")
         fid_plus = e.get("fidelity_plus", 0.0)
         fid_minus = e.get("fidelity_minus", 0.0)
+        char = e.get("pyg_characterization", 0.0)
+        fsuf = e.get("paper_sufficiency", 0.0)
+        fcom = e.get("paper_comprehensiveness", 0.0)
+        ff1 = e.get("paper_f1_fidelity", 0.0)
         img_src = f"graphs/mask_{_html_escape(graph_id)}.png"
         body.append("<div class='card'>")
         body.append(f"  <a href='{img_src}' target='_blank'>")
         body.append(f"    <img src='{img_src}' alt='{_html_escape(graph_id)}' loading='lazy' onerror=\"this.alt='No image'\"/>")
         body.append(f"    <span class='label'>{_html_escape(graph_id)}</span>")
         body.append(
-            f"    <span class='meta'>fid+ {fid_plus:.2f} fid&minus; {fid_minus:.2f}</span>"
+            f"    <span class='meta'>"
+            f"fid+ {fid_plus:.2f} fid&minus; {fid_minus:.2f} "
+            f"char {char:.2f} "
+            f"Fsuf {fsuf:.2f} Fcom {fcom:.2f} Ff1 {ff1:.2f}"
+            f"</span>"
         )
         body.append("  </a>")
         body.append("</div>")
@@ -299,6 +315,22 @@ def write_comparison_index_html(
     for ex in explainers:
         v = per_explainer.get(ex, {}).get("mean_fid_minus", 0.0)
         rows.append(f"<td>{v:.4f}</td>")
+    rows.append("</tr><tr><td>Mean char (PyG)</td>")
+    for ex in explainers:
+        v = per_explainer.get(ex, {}).get("mean_pyg_characterization", 0.0)
+        rows.append(f"<td>{v:.4f}</td>")
+    rows.append("</tr><tr><td>Mean Fsuf</td>")
+    for ex in explainers:
+        v = per_explainer.get(ex, {}).get("mean_paper_sufficiency", 0.0)
+        rows.append(f"<td>{v:.4f}</td>")
+    rows.append("</tr><tr><td>Mean Fcom</td>")
+    for ex in explainers:
+        v = per_explainer.get(ex, {}).get("mean_paper_comprehensiveness", 0.0)
+        rows.append(f"<td>{v:.4f}</td>")
+    rows.append("</tr><tr><td>Mean Ff1</td>")
+    for ex in explainers:
+        v = per_explainer.get(ex, {}).get("mean_paper_f1_fidelity", 0.0)
+        rows.append(f"<td>{v:.4f}</td>")
     rows.append("</tr></table>")
 
     # Per-graph grid
@@ -312,11 +344,14 @@ def write_comparison_index_html(
             cell = grid.get(gid, {}).get(ex, {})
             img = cell.get("img", "")
             fp = cell.get("fid_plus", 0.0)
+            fm = cell.get("fid_minus", 0.0)
+            ff1 = cell.get("paper_f1_fidelity", 0.0)
             if img:
                 rows.append(
                     f"<td><a href='{_html_escape(img)}' target='_blank'>"
                     f"<img src='{_html_escape(img)}' loading='lazy'/></a>"
-                    f"<br/>fid+ {fp:.2f}</td>"
+                    f"<br/>fid+ {fp:.2f} fid&minus; {fm:.2f}"
+                    f"<br/>Ff1 {ff1:.2f}</td>"
                 )
             else:
                 rows.append("<td>-</td>")
