@@ -147,12 +147,12 @@ def _build_ig_node(
     n_steps: int = DEFAULT_IG_N_STEPS,
     **kwargs: Any,
 ) -> Explainer:
-    """Integrated Gradients over node features."""
-    from torch_geometric.explain.algorithm import CaptumExplainer
+    """Integrated Gradients over node features (Captum-safe bridge; see integrated_gradients_node)."""
+    from mprov3_explainer.integrated_gradients_node import IntegratedGradientsNodeExplainer
 
     return Explainer(
         model=model,
-        algorithm=CaptumExplainer("IntegratedGradients", n_steps=n_steps),
+        algorithm=IntegratedGradientsNodeExplainer(n_steps=n_steps),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
         node_mask_type=NODE_MASK_ATTRIBUTES,
         edge_mask_type=None,
@@ -167,12 +167,12 @@ def _build_ig_edge(
     n_steps: int = DEFAULT_IG_N_STEPS,
     **kwargs: Any,
 ) -> Explainer:
-    """Integrated Gradients over edge mask."""
-    from torch_geometric.explain.algorithm import CaptumExplainer
+    """Integrated Gradients over edge mask (Captum-safe bridge; see integrated_gradients_edge)."""
+    from mprov3_explainer.integrated_gradients_edge import IntegratedGradientsEdgeExplainer
 
     return Explainer(
         model=model,
-        algorithm=CaptumExplainer("IntegratedGradients", n_steps=n_steps),
+        algorithm=IntegratedGradientsEdgeExplainer(n_steps=n_steps),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
         node_mask_type=None,
         edge_mask_type=EDGE_MASK_OBJECT,

@@ -127,6 +127,16 @@ def _parse_args() -> argparse.Namespace:
         help="Training epochs for PGExplainer MLP.",
     )
     parser.add_argument(
+        "--pg_train_max_graphs",
+        type=int,
+        default=None,
+        help=(
+            "Max training graphs per epoch for PGExplainer (default: full train loader). "
+            "When --max_graphs is set and this is omitted, a subsample cap is applied so "
+            "PG training is not orders of magnitude slower than test evaluation."
+        ),
+    )
+    parser.add_argument(
         "--ig_n_steps", type=int, default=DEFAULT_IG_N_STEPS,
         help="Integrated Gradients interpolation steps.",
     )
@@ -226,6 +236,14 @@ def main() -> None:
         if explainer_name == "PGEXPL":
             epochs_for_builder = args.pg_explainer_epochs
 
+        pg_train_cap: int | None = args.pg_train_max_graphs
+        if (
+            explainer_name == "PGEXPL"
+            and pg_train_cap is None
+            and args.max_graphs is not None
+        ):
+            pg_train_cap = min(2048, max(256, args.max_graphs * 128))
+
         print(f"\n--- {explainer_name} ---")
         t0 = time.perf_counter()
         results: list = []
@@ -241,6 +259,7 @@ def main() -> None:
             correct_class_only=not args.no_correct_class_only,
             min_mask_range=args.min_mask_range,
             train_loader=train_loader if spec.needs_training else None,
+            pg_train_max_graphs=pg_train_cap if explainer_name == "PGEXPL" else None,
             **explainer_kwargs,
         ):
             results.append(result)

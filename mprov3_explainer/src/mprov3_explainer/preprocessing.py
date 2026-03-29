@@ -75,6 +75,33 @@ def reduce_node_mask(node_mask: torch.Tensor) -> torch.Tensor:
     return node_mask.abs().mean(dim=-1)
 
 
+def _align_node_mask_to_graph(node_mask: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+    """
+    Remove stray batch dimensions (e.g. Captum ``(1, N, F)``) so masks broadcast with
+    ``x`` of shape ``(N, F)``. Also fix ``(F, N)`` attributions mistaken for ``(N, F)``.
+    """
+    m = node_mask
+    N = int(x.size(0))
+    F = int(x.size(1))
+    while m.dim() > 2:
+        m = m.squeeze(0)
+    while m.dim() >= 2 and m.size(0) == 1:
+        m = m.squeeze(0)
+    if m.dim() == 2 and m.size(0) == F and m.size(1) == N:
+        m = m.transpose(0, 1).contiguous()
+    if m.dim() == 2 and m.size(0) == N and m.size(1) == N:
+        m = m.abs().mean(dim=1)
+    if m.dim() == 2 and m.size(0) == N:
+        return m
+    if m.dim() == 1 and m.numel() == N:
+        return m
+    if m.numel() == N:
+        return m.view(N)
+    if m.numel() == N * F:
+        return m.view(N, F)
+    return m
+
+
 def _mask_range(mask: torch.Tensor) -> float:
     if mask.numel() == 0:
         return 0.0
@@ -115,6 +142,8 @@ def apply_preprocessing(
         edge_mask = edge_mask.detach().float()
     if node_mask is not None:
         node_mask = node_mask.detach().float()
+        if explanation.x is not None:
+            node_mask = _align_node_mask_to_graph(node_mask, explanation.x)
 
     # Low-information filter: check whichever mask is available
     if edge_mask is not None and edge_mask.numel() > 0:
