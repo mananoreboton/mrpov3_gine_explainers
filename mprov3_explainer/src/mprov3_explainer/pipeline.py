@@ -277,6 +277,15 @@ def run_explanations(
             model.to(device)
 
             if hasattr(raw_explanation, "to") and device.type != "cpu":
+                # MPS does not support float64 tensors; some explainers (notably
+                # torch_geometric.contrib PGMExplainer) may emit float64 masks/stats.
+                if device.type == "mps" and hasattr(raw_explanation, "apply"):
+                    def _float64_to_float32(obj: Any) -> Any:
+                        if torch.is_tensor(obj) and obj.dtype == torch.float64:
+                            return obj.float()
+                        return obj
+
+                    raw_explanation = raw_explanation.apply(_float64_to_float32)
                 raw_explanation = raw_explanation.to(device)
 
             has_edge_mask = getattr(raw_explanation, "edge_mask", None) is not None

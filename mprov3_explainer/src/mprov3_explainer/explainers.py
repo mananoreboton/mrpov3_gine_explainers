@@ -209,8 +209,42 @@ def _build_pgm_explainer(
     """PGMExplainer — perturbation + chi-square statistical test, node masks only."""
     from torch_geometric.contrib.explain import PGMExplainer
 
+    class _DefaultBatchAndEdgeAttrWrapper(torch.nn.Module):
+        """Make `batch`/`edge_attr` optional for explainers that omit them.
+
+        PGMExplainer may call `model(x, edge_index, ...)` without supplying `batch`
+        (and sometimes `edge_attr`). Our base model (`MProGNN`) requires `batch`
+        and expects `edge_attr` when `edge_dim > 0`.
+        """
+
+        def __init__(self, base: torch.nn.Module):
+            super().__init__()
+            self.base = base
+
+        def forward(
+            self,
+            x: torch.Tensor,
+            edge_index: torch.Tensor,
+            batch: Optional[torch.Tensor] = None,
+            edge_attr: Optional[torch.Tensor] = None,
+            **model_kwargs: Any,
+        ) -> torch.Tensor:
+            if batch is None:
+                batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+
+            if edge_attr is None and edge_index is not None and edge_index.numel() > 0:
+                edge_dim = getattr(self.base, "edge_dim", 1)
+                edge_attr = torch.zeros(
+                    edge_index.size(1),
+                    edge_dim,
+                    dtype=x.dtype,
+                    device=x.device,
+                )
+
+            return self.base(x, edge_index, batch, edge_attr=edge_attr, **model_kwargs)
+
     return Explainer(
-        model=model,
+        model=_DefaultBatchAndEdgeAttrWrapper(model),
         algorithm=PGMExplainer(num_samples=num_samples),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
         node_mask_type=NODE_MASK_ATTRIBUTES,
