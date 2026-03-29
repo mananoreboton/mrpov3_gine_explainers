@@ -48,6 +48,31 @@ from mprov3_explainer.visualize import (
 )
 
 
+def _explainers_present_in_run(explanations_ts_dir: Path) -> list[str]:
+    """
+    Registered explainer names that have a completed run under this timestamp
+    (report + masks/). Used when --explainers is omitted so partial runs do not
+    spam "Skip …: no folder" for every missing method.
+    """
+    present: list[str] = []
+    if not explanations_ts_dir.is_dir():
+        return present
+    for sub in sorted(explanations_ts_dir.iterdir()):
+        if not sub.is_dir():
+            continue
+        name = sub.name
+        if name not in AVAILABLE_EXPLAINERS:
+            continue
+        if not (sub / "explanation_report.json").is_file():
+            continue
+        if not (sub / "masks").is_dir():
+            continue
+        present.append(name)
+    order = {n: i for i, n in enumerate(AVAILABLE_EXPLAINERS)}
+    present.sort(key=lambda n: (order.get(n, 999), n))
+    return present
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate visualizations from a previous explanation run.",
@@ -58,7 +83,10 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--explainers", type=str, nargs="*", default=None,
-        help=f"Explainers to visualize (default: all: {AVAILABLE_EXPLAINERS}).",
+        help=(
+            "Explainers to visualize. If omitted, discover explainer folders "
+            "present under the chosen explanation timestamp (recommended for partial runs)."
+        ),
     )
     parser.add_argument(
         "--timestamp", type=str, default=None,
@@ -71,14 +99,6 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-
-    explainer_names: list[str] = (
-        args.explainers
-        if args.explainers
-        else ([args.explainer] if args.explainer is not None else list(AVAILABLE_EXPLAINERS))
-    )
-    for name in explainer_names:
-        validate_explainer(name)
 
     results_root = Path(args.results_root or _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME)
     explanations_base = results_root / RESULTS_EXPLANATIONS
@@ -99,6 +119,26 @@ def main() -> None:
                 f"No timestamped run found under {explanations_base}."
             )
         ts = timestamp_dir.name
+
+    if args.explainers:
+        explainer_names = list(args.explainers)
+    elif args.explainer is not None:
+        explainer_names = [args.explainer]
+    else:
+        explainer_names = _explainers_present_in_run(timestamp_dir)
+        if not explainer_names:
+            raise FileNotFoundError(
+                f"No explainer outputs found under {timestamp_dir} "
+                f"(need explanation_report.json and masks/ per explainer). "
+                f"Run run_explanations.py first, or pass --explainers explicitly."
+            )
+        print(
+            f"Using explainers present in {ts}: {', '.join(explainer_names)}",
+            flush=True,
+        )
+
+    for name in explainer_names:
+        validate_explainer(name)
 
     data_root = Path(args.data_root) if args.data_root else _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
     if not data_root.exists():

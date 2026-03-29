@@ -105,7 +105,7 @@ After running the explainer, generate an HTML index and 2D molecular images with
 uv run python scripts/generate_visualizations.py
 ```
 
-This uses the **latest** explanation run under `results/explanations/` and, by default, all **available explainers**. Output is written to **results/visualizations/&lt;new_timestamp&gt;/&lt;explainer&gt;/**:
+This uses the **latest** explanation run under `results/explanations/`. If you do not pass `--explainer` / `--explainers`, it **only processes explainer folders that exist** under that run (with `explanation_report.json` and `masks/`), so partial runs (e.g. only PGEXPL) do not print a long list of “Skip …” lines. Output is written to **results/visualizations/&lt;new_timestamp&gt;/&lt;explainer&gt;/**:
 
 - `index.html` – summary (mean fidelity, num_graphs) and a grid of thumbnails linking to each graphic.
 - `graphs/mask_&lt;pdb_id&gt;.png` – 2D molecule drawn from the SDF with bonds colored by explainer importance (max of edge_mask per bond).
