@@ -2,6 +2,7 @@
 
 __version__ = "0.1.0"
 
+from mprov3_explainer.comparison_report_html import write_comparison_report_html
 from mprov3_explainer.device import get_device
 from mprov3_explainer.explainers import (
     AVAILABLE_EXPLAINERS,
@@ -33,6 +34,7 @@ from mprov3_explainer.preprocessing import (
 )
 
 __all__ = [
+    "write_comparison_report_html",
     "get_device",
     "__version__",
     "AVAILABLE_EXPLAINERS",

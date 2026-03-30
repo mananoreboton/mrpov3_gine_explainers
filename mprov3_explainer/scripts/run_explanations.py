@@ -4,7 +4,7 @@ Run explainer(s) on the trained GINE: load model and dataset from mprov3_gine/re
 generate graph-level explanations, compute fidelity.
 Outputs go to results/explanations/<timestamp>/<explainer>/.
 
-After all explainers run, writes a comparison_report.json at
+After all explainers run, writes comparison_report.json and comparison_report.html at
 results/explanations/<timestamp>/.
 
 Usage:
@@ -61,6 +61,7 @@ from mprov3_explainer import (
     run_explanations,
     run_timestamp,
     validate_explainer,
+    write_comparison_report_html,
 )
 from mprov3_explainer.explainers import get_spec
 
@@ -405,7 +406,15 @@ def main() -> None:
     (comparison_path / "comparison_report.json").write_text(
         json.dumps(comparison, indent=2), encoding="utf-8",
     )
+    html_path = comparison_path / "comparison_report.html"
+    write_comparison_report_html(
+        html_path,
+        comparison,
+        paper_metrics_computed=args.paper_metrics,
+        fidelity_valid_only=args.fidelity_valid_only,
+    )
     print(f"\nComparison report: {comparison_path / 'comparison_report.json'}")
+    print(f"Comparison HTML:   {html_path}")
     print(f"Run timestamp: {ts}")
 
 
