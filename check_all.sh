@@ -166,11 +166,11 @@ run_uv_python "$GNN_DIR" "§4.1 create_evaluation_report.py" create_evaluation_r
 # =============================================================================
 # 4. mprov3_explainer — explanations then visualizations (order required)
 # =============================================================================
-section "4. mprov3_explainer — scripts/run_explanations.py --explainer GNNExplainer --max_graphs 1"
-run_uv_python "$MEX_DIR" "run_explanations.py" scripts/run_explanations.py --explainer GNNExplainer --max_graphs 1
+section "4. mprov3_explainer — scripts/run_explanations.py --explainer GNNEXPL --max_graphs 1"
+run_uv_python "$MEX_DIR" "run_explanations.py" scripts/run_explanations.py --explainer GNNEXPL --max_graphs 1
 
-section "4. mprov3_explainer — scripts/generate_visualizations.py --explainers GNNExplainer"
-run_uv_python "$MEX_DIR" "generate_visualizations.py" scripts/generate_visualizations.py --explainers GNNExplainer
+section "4. mprov3_explainer — scripts/generate_visualizations.py --explainers GNNEXPL"
+run_uv_python "$MEX_DIR" "generate_visualizations.py" scripts/generate_visualizations.py --explainers GNNEXPL
 
 # =============================================================================
 # 5. v2 — compare_explainers.py (default parameters), last

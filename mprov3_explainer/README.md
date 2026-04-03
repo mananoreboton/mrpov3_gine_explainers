@@ -4,6 +4,8 @@ MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations 
 
 Outputs are written under **`results/<explanations|visualizations>/<timestamp>/<explainer>/`** so one run can produce results for multiple explainers under the same timestamp.
 
+**Shell orchestration:** From the repo root, [**`scripts/mprov3/README.md`**](../scripts/mprov3/README.md) documents bash wrappers that run **`run_explanations.py`** then **`generate_visualizations.py`** in order, with fold-aware args, optional **`--trainings_timestamp`** for the GINE checkpoint, and **`-m` / `--include-misclassified`** (or **`INCLUDE_MISCLASSIFIED=1`**) to pass **`--no_correct_class_only`** into explanations.
+
 ## Flow
 
 1. **Resolve paths** – From `results_root`, resolve latest `trainings/<timestamp>/best_gnn.pt` and `datasets/<timestamp>/` (contains `data.pt`). Splits (train/val/test) are read from `data_root/Splits/`.

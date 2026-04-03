@@ -28,6 +28,13 @@ def run_timestamp() -> str:
     return datetime.now(timezone.utc).strftime(RUN_TIMESTAMP_FMT)
 
 
+def _parse_timestamp_dir_name(name: str) -> None:
+    """Raise ValueError if *name* is not a valid RUN_TIMESTAMP_FMT folder name."""
+    if len(name) != 17 or name[4] != "-" or name[7] != "-" or name[10] != "_":
+        raise ValueError(f"Invalid trainings timestamp folder name: {name!r}")
+    datetime.strptime(name, RUN_TIMESTAMP_FMT)
+
+
 def get_latest_timestamp_dir(base_path: Path) -> Optional[Path]:
     """
     Return the most recent timestamp-named subfolder under base_path.
@@ -49,10 +56,27 @@ def get_latest_timestamp_dir(base_path: Path) -> Optional[Path]:
 
 
 def resolve_checkpoint_path(
-    results_root: Path, checkpoint_name: str = DEFAULT_TRAINING_CHECKPOINT_FILENAME
+    results_root: Path,
+    checkpoint_name: str = DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    *,
+    trainings_timestamp: Optional[str] = None,
 ) -> Path:
-    """Resolve path to checkpoint from results_root/trainings/<latest>/<checkpoint_name>."""
+    """
+    Resolve path to checkpoint under results_root/trainings/.
+
+    If *trainings_timestamp* is set, use ``trainings/<trainings_timestamp>/<checkpoint_name>``.
+    Otherwise use the latest timestamp-named subfolder (by mtime).
+    """
     trainings_base = results_root / RESULTS_TRAININGS
+    if trainings_timestamp is not None:
+        _parse_timestamp_dir_name(trainings_timestamp)
+        run_dir = trainings_base / trainings_timestamp
+        if not run_dir.is_dir():
+            raise FileNotFoundError(f"Training run folder not found: {run_dir}")
+        path = run_dir / checkpoint_name
+        if not path.exists():
+            raise FileNotFoundError(f"Checkpoint not found: {path}")
+        return path
     latest = get_latest_timestamp_dir(trainings_base)
     if latest is None:
         raise FileNotFoundError(f"No training run found under {trainings_base}. Run train.py first.")
@@ -87,15 +111,21 @@ def read_dataset_name_from_train_log(training_run_dir: Path) -> Optional[str]:
     return None
 
 
-def resolve_training_checkpoint_and_dataset_name(results_root: Path) -> Tuple[Path, str]:
+def resolve_training_checkpoint_and_dataset_name(
+    results_root: Path,
+    *,
+    trainings_timestamp: Optional[str] = None,
+) -> Tuple[Path, str]:
     """
-    Latest ``results/trainings/<ts>/`` checkpoint plus the PyG dataset folder name to load.
+    ``results/trainings/<ts>/`` checkpoint plus the PyG dataset folder name to load.
 
     Prefers the dataset recorded in that run's ``train.log`` when the corresponding
     ``results/datasets/<name>/data.pt`` still exists; otherwise falls back to
     ``resolve_dataset_dir`` (latest dataset).
     """
-    checkpoint_path = resolve_checkpoint_path(results_root)
+    checkpoint_path = resolve_checkpoint_path(
+        results_root, trainings_timestamp=trainings_timestamp
+    )
     run_dir = checkpoint_path.parent
     logged = read_dataset_name_from_train_log(run_dir)
     if logged is not None:

@@ -102,6 +102,15 @@ def _parse_args() -> argparse.Namespace:
         help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
     )
     parser.add_argument(
+        "--trainings_timestamp",
+        type=str,
+        default=None,
+        help=(
+            "Use results_root/trainings/<this_timestamp>/ for the checkpoint "
+            "(default: latest training run by mtime)."
+        ),
+    )
+    parser.add_argument(
         "--train_split_file", type=str, default=DEFAULT_TRAIN_SPLIT_FILE,
     )
     parser.add_argument(
@@ -204,7 +213,11 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    checkpoint_path = resolve_checkpoint_path(results_root, args.checkpoint)
+    checkpoint_path = resolve_checkpoint_path(
+        results_root,
+        args.checkpoint,
+        trainings_timestamp=args.trainings_timestamp,
+    )
     dataset_dir = resolve_dataset_dir(results_root)
     dataset_name = dataset_dir.name
     dataset_base = results_root / RESULTS_DATASETS

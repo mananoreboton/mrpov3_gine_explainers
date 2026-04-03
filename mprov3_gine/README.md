@@ -4,6 +4,8 @@ Python pipeline to train a Graph Neural Network on the MPro-URV Version 3 snapsh
 
 **Shared defaults:** Training, fold, GINE architecture, path segment names, `**SplitConfig`**, `**DEFAULT_DATA_ROOT**`, `**DEFAULT_RESULTS_ROOT**`, and sibling project `**Path`s (`WORKSPACE_ROOT**`, `**GINE_PROJECT_DIR**`, …) come from `**mprov3_gine_explainer_defaults**` (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is `**MProGNN**` in `**model.py**`.
 
+**Shell orchestration:** End-to-end runs (same step order as repo `check_all.sh` §3, plus optional explainer steps) for smoke tests, a single CV fold, or all folds live under [**`scripts/mprov3/`**](../scripts/mprov3/README.md) (`smoke_gine_explainer.sh`, `run_gine_fold.sh`, `run_gine_explainer_fold.sh`, etc.). See that README for `SKIP_SYNC`, `NUM_FOLDS`, `GNN_TRAIN_EPOCHS`, and the **`-m` / `--include-misclassified`** flag for explainer runs.
+
 ## Overview
 
 ### Pipeline: scripts, inputs and outputs

@@ -1,6 +1,6 @@
 """
 Classify the test set on the trained GNN.
-Loads a saved checkpoint from the latest results/trainings/<timestamp>/ and reports test accuracy.
+Loads a saved checkpoint from results/trainings/<timestamp>/ (latest by mtime, or --trainings_timestamp) and reports test accuracy.
 Saves per-sample results to results/classifications/<timestamp>/ for report generation.
 Usage:
   uv run python evaluate.py [--data_root /path/to/snapshot] [--checkpoint best_gnn.pt] [--fold_index 0]
@@ -30,9 +30,9 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
     DEFAULT_VAL_SPLIT_FILE,
     PYG_DATA_FILENAME,
+    resolve_checkpoint_path,
     RESULTS_CLASSIFICATIONS,
     RESULTS_DATASETS,
-    RESULTS_TRAININGS,
     SplitConfig,
 )
 
@@ -63,6 +63,15 @@ def _parse_args() -> argparse.Namespace:
         type=str,
         default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
         help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}); loaded from latest results_root/trainings/<timestamp>/.",
+    )
+    parser.add_argument(
+        "--trainings_timestamp",
+        type=str,
+        default=None,
+        help=(
+            "Load checkpoint from results_root/trainings/<this_timestamp>/ "
+            "(default: latest training run by mtime)."
+        ),
     )
     parser.add_argument(
         "--train_split_file",
@@ -134,13 +143,11 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    trainings_base = results_root / RESULTS_TRAININGS
-    latest_training = get_latest_timestamp_dir(trainings_base)
-    if latest_training is None:
-        raise FileNotFoundError(f"No training run found under {trainings_base}. Run train.py first.")
-    checkpoint_path = latest_training / args.checkpoint
-    if not checkpoint_path.exists():
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    checkpoint_path = resolve_checkpoint_path(
+        results_root,
+        args.checkpoint,
+        trainings_timestamp=args.trainings_timestamp,
+    )
 
     dataset_base = results_root / RESULTS_DATASETS
     latest_dataset = get_latest_timestamp_dir(dataset_base)
