@@ -2,7 +2,7 @@
 Monorepo layout: workspace root is the parent of the ``mprov3_gine_explainer_defaults`` project folder.
 
 Expected siblings under that root include ``mprov3_gine``, ``mprov3_data`` (name from
-``DEFAULT_MPRO_SNAPSHOT_DIR_NAME``), ``mprov3_explainer``, ``v2``, etc.
+``DEFAULT_MPRO_SNAPSHOT_DIR_NAME``), ``mprov3_explainer``, etc.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ WORKSPACE_ROOT: Path = _WORKSPACE_ROOT
 
 GINE_PROJECT_DIR: Path = _WORKSPACE_ROOT / "mprov3_gine"
 MPRO_EXPLAINER_PROJECT_DIR: Path = _WORKSPACE_ROOT / "mprov3_explainer"
-V2_PROJECT_DIR: Path = _WORKSPACE_ROOT / "v2"
 
 DEFAULT_DATA_ROOT: str = str(_WORKSPACE_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME)
 """Default raw MPro snapshot path (sibling of ``mprov3_gine``)."""

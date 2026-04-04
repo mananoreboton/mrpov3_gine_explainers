@@ -41,13 +41,11 @@ from mprov3_gine_explainer_defaults.results_path_resolution import (
     run_timestamp,
     visualizations_run_dir,
 )
-from mprov3_gine_explainer_defaults.explainer_name_validation import validate_explainer_names
 from mprov3_gine_explainer_defaults.gine_project_paths import (
     DEFAULT_DATA_ROOT,
     DEFAULT_RESULTS_ROOT,
     GINE_PROJECT_DIR,
     MPRO_EXPLAINER_PROJECT_DIR,
-    V2_PROJECT_DIR,
     WORKSPACE_ROOT,
 )
 from mprov3_gine_explainer_defaults.split_config import SplitConfig
@@ -80,10 +78,8 @@ __all__ = [
     "WORKSPACE_ROOT",
     "GINE_PROJECT_DIR",
     "MPRO_EXPLAINER_PROJECT_DIR",
-    "V2_PROJECT_DIR",
     "DEFAULT_DATA_ROOT",
     "DEFAULT_RESULTS_ROOT",
-    "validate_explainer_names",
     "DEFAULT_IN_CHANNELS",
     "DEFAULT_HIDDEN_CHANNELS",
     "DEFAULT_NUM_LAYERS",

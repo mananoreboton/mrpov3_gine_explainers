@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end check (strict sequence). v2 runs last.
+# End-to-end check (strict sequence).
 #
 # From repository root:
 #   ./check_all.sh
@@ -7,11 +7,10 @@
 #   GNN_TRAIN_EPOCHS=5 ./check_all.sh    # default train epochs is 1
 #
 # Order:
-#   1. uv sync — mprov3_gine_explainer_defaults, mprov3_gine, mprov3_explainer, v2 (last)
+#   1. uv sync — mprov3_gine_explainer_defaults, mprov3_gine, mprov3_explainer
 #   2. mprov3_gine_explainer_defaults — hardcoded constant names (see Python REQUIRED_NAMES below)
 #   3. mprov3_gine — README §0–§4.1 (config defaults)
 #   4. mprov3_explainer — run_explanations.py --explainer GNNExplainer --max_graphs 1, then generate_visualizations.py
-#   5. v2 — uv run python compare_explainers.py (default args)
 #
 # Requires: MPro snapshot at mprov3_gine/config.DEFAULT_DATA_ROOT.
 
@@ -45,13 +44,13 @@ run_uv_python() {
 }
 
 # =============================================================================
-# 1. uv sync — v2 last (matches execution order)
+# 1. uv sync
 # =============================================================================
 if [[ "${SKIP_SYNC:-}" == "1" ]]; then
   section "Skipping uv sync (SKIP_SYNC=1)"
 else
-  section "1. uv sync — mprov3_gine_explainer_defaults, mprov3_gine, mprov3_explainer, v2"
-  for pkg in mprov3_gine_explainer_defaults mprov3_gine mprov3_explainer v2; do
+  section "1. uv sync — mprov3_gine_explainer_defaults, mprov3_gine, mprov3_explainer"
+  for pkg in mprov3_gine_explainer_defaults mprov3_gine mprov3_explainer; do
     echo ""
     echo "--> $pkg"
     (cd "$ROOT/$pkg" && uv sync) || fail "uv sync failed in $pkg"
@@ -120,12 +119,10 @@ REQUIRED_NAMES = (
     'resolve_dataset_dir',
     'explanations_run_dir',
     'visualizations_run_dir',
-    'validate_explainer_names',
     'SplitConfig',
     'WORKSPACE_ROOT',
     'GINE_PROJECT_DIR',
     'MPRO_EXPLAINER_PROJECT_DIR',
-    'V2_PROJECT_DIR',
     'DEFAULT_DATA_ROOT',
     'DEFAULT_RESULTS_ROOT',
 )
@@ -171,12 +168,6 @@ run_uv_python "$MEX_DIR" "run_explanations.py" scripts/run_explanations.py --exp
 
 section "4. mprov3_explainer — scripts/generate_visualizations.py --explainers GNNEXPL"
 run_uv_python "$MEX_DIR" "generate_visualizations.py" scripts/generate_visualizations.py --explainers GNNEXPL
-
-# =============================================================================
-# 5. v2 — compare_explainers.py (default parameters), last
-# =============================================================================
-section "5. v2 — uv run python compare_explainers.py (last)"
-run_uv_python "$ROOT/v2" "v2 compare_explainers.py" compare_explainers.py
 
 echo ""
 if [[ "$FAILED" -eq 0 ]]; then

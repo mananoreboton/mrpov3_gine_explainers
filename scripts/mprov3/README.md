@@ -19,7 +19,7 @@ Run everything from the **repository root**:
 1. `mprov3_explainer/scripts/run_explanations.py` (checkpoint and dataset resolved from **`mprov3_gine/results`** via `--results_root`)
 2. `mprov3_explainer/scripts/generate_visualizations.py` (reads explanations under **`mprov3_explainer/results/explanations/`**)
 
-These scripts do **not** run `check_all.sh` §2 (defaults package constant check) or §5 (`v2/compare_explainers.py`).
+These scripts do **not** run `check_all.sh` §2 (defaults package constant check).
 
 **Note:** The `check_raw_data_format.py` step is **temporarily commented out** in [`run_gine_fold.sh`](run_gine_fold.sh) and [`smoke_gine_explainer.sh`](smoke_gine_explainer.sh) (marked `TEMP` / `end TEMP`). Uncomment that block in those files to run it again. [`check_all.sh`](../../check_all.sh) still runs §0 as usual.
 

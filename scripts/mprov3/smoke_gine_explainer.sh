@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Minimal end-to-end check: full GINE §3 for fold 0 (tiny train epochs) + one explainer graph + viz.
-# Mirrors check_all.sh steps 3–4 (mprov3_gine + mprov3_explainer), without v2 or defaults package check.
+# Mirrors check_all.sh steps 3–4 (mprov3_gine + mprov3_explainer), without the defaults package check.
 #
 # Usage:
 #   ./scripts/mprov3/smoke_gine_explainer.sh [-m|--include-misclassified]
