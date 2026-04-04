@@ -1,6 +1,6 @@
 """
 Build the PyG dataset from SDFs and Info.csv. Run this once before training.
-The resulting dataset is saved under results/datasets/<timestamp>/.
+The resulting dataset is saved under results/datasets/ (data.pt, pdb_order.txt).
 """
 
 import argparse
@@ -19,7 +19,7 @@ from mprov3_gine_explainer_defaults import (
 )
 from dataset import load_activity_and_category, sdf_to_graph
 from tqdm import tqdm
-from utils import RunLogger, run_timestamp
+from utils import RunLogger, log_overwrite_if_exists
 
 
 def build_and_save_pyg_dataset(
@@ -27,7 +27,7 @@ def build_and_save_pyg_dataset(
     out_dir: Path,
 ) -> Path:
     """
-    Build PyG graph list from SDFs and Info.csv and save to out_dir (e.g. results/datasets/<timestamp>/).
+    Build PyG graph list from SDFs and Info.csv and save to out_dir (e.g. results/datasets/).
     Returns the path to the saved data.pt.
     """
     sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
@@ -73,7 +73,7 @@ def main() -> None:
         "--results_root",
         type=str,
         default=None,
-        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); dataset written to results_root/datasets/<timestamp>/.",
+        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); dataset written to results_root/datasets/.",
     )
     args = parser.parse_args()
     data_root = Path(args.data_root or DEFAULT_DATA_ROOT)
@@ -81,12 +81,13 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    ts = run_timestamp()
-    out_dir = results_root / RESULTS_DATASETS / ts
+    out_dir = results_root / RESULTS_DATASETS
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "build.log"
 
     with RunLogger(log_path) as log:
+        log_overwrite_if_exists(out_dir / PYG_DATA_FILENAME, log.log)
+        log_overwrite_if_exists(out_dir / PYG_PDB_ORDER_FILENAME, log.log)
         log.log(f"Building PyG dataset from {data_root}")
         log.log(f"Output directory: {out_dir}")
         path = build_and_save_pyg_dataset(data_root, out_dir)

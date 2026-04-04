@@ -1,40 +1,23 @@
 """
-Shared utilities: run timestamps, latest-run resolution, logging, and HTML helpers.
+Shared utilities: logging, overwrite notices, and HTML helpers.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
-
-# Timestamp format for result subfolders (e.g. 2025-03-14_120000)
-RUN_TIMESTAMP_FMT = "%Y-%m-%d_%H%M%S"
+from typing import Callable, List, Optional
 
 
-def run_timestamp() -> str:
-    """Return current UTC timestamp string for use in output paths."""
-    return datetime.now(timezone.utc).strftime(RUN_TIMESTAMP_FMT)
+def log_overwrite_if_exists(path: Path, log: Callable[[str], None]) -> None:
+    """If *path* exists, log a single info line before replacing it."""
+    if path.exists():
+        log(f"[INFO] Output exists; overwriting: {path}")
 
 
-def get_latest_timestamp_dir(base_path: Path) -> Optional[Path]:
-    """
-    Return the path to the most recent timestamp-named subfolder under base_path.
-    Expects subfolder names like 2025-03-14_120000. Returns None if no valid subfolder exists.
-    """
-    if not base_path.exists() or not base_path.is_dir():
-        return None
-    candidates: List[Path] = []
-    for p in base_path.iterdir():
-        if p.is_dir() and len(p.name) == 17 and p.name[4] == "-" and p.name[7] == "-" and p.name[10] == "_":
-            try:
-                datetime.strptime(p.name, RUN_TIMESTAMP_FMT)
-                candidates.append(p)
-            except ValueError:
-                pass
-    if not candidates:
-        return None
-    return max(candidates, key=lambda x: x.stat().st_mtime)
+def log_overwrite_dir_if_nonempty(path: Path, log: Callable[[str], None]) -> None:
+    """If *path* is a non-empty directory, log once before writing into it."""
+    if path.is_dir() and any(path.iterdir()):
+        log(f"[INFO] Output directory exists with prior files; overwriting under: {path}")
 
 
 def html_escape(text: str) -> str:

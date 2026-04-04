@@ -1,6 +1,6 @@
 """
 Train GNN on MPro Version 3: classification only (Category: low / medium / high potency).
-Requires a pre-built PyG dataset (run build_dataset.py first). Saves best model to results/trainings/<timestamp>/.
+Requires a pre-built PyG dataset (run build_dataset.py first). Saves best model to results/trainings/.
 Usage:
   uv run python build_dataset.py --data_root /path/to/snapshot
   uv run python train.py --data_root /path/to/snapshot [--num_folds 5] [--fold_index 0] [--epochs 100]
@@ -12,6 +12,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from mprov3_gine_explainer_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
     DEFAULT_BATCH_SIZE,
     DEFAULT_DATA_ROOT,
     DEFAULT_DROPOUT,
@@ -31,16 +32,16 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
     DEFAULT_VAL_SPLIT_FILE,
-    PYG_DATA_FILENAME,
     RESULTS_DATASETS,
     RESULTS_TRAININGS,
     SplitConfig,
+    resolve_dataset_dir,
 )
 
 from loaders import create_data_loaders
 from model import MProGNN
 from train_epoch import train_one_epoch
-from utils import RunLogger, get_latest_timestamp_dir, run_timestamp
+from utils import RunLogger, log_overwrite_dir_if_nonempty
 from validation import evaluate_validation
 
 
@@ -56,7 +57,7 @@ def _parse_args() -> argparse.Namespace:
         "--results_root",
         type=str,
         default=None,
-        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); uses latest results/datasets/<timestamp>/ and writes to results/trainings/<timestamp>/.",
+        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); reads results/datasets/data.pt, writes to results/trainings/.",
     )
     parser.add_argument(
         "--train_split_file",
@@ -111,16 +112,11 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
+    dataset_dir = resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
-    latest_dataset = get_latest_timestamp_dir(dataset_base)
-    if latest_dataset is None or not (latest_dataset / PYG_DATA_FILENAME).exists():
-        raise FileNotFoundError(
-            f"No dataset found under {dataset_base}. Run build_dataset.py with --results_root {results_root} first."
-        )
-    dataset_name = latest_dataset.name
+    dataset_name = BUILT_DATASET_FOLDER_NAME
 
-    ts = run_timestamp()
-    out_dir = results_root / RESULTS_TRAININGS / ts
+    out_dir = results_root / RESULTS_TRAININGS
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "train.log"
 
@@ -135,7 +131,8 @@ def main() -> None:
         dataset_name=dataset_name,
     )
     with RunLogger(log_path) as log:
-        log.log(f"Dataset: {dataset_base / dataset_name} (latest)")
+        log_overwrite_dir_if_nonempty(out_dir, log.log)
+        log.log(f"Dataset: {dataset_dir}")
         log.log(f"Output: {out_dir}")
         train_loader, val_loader, _ = create_data_loaders(
             dataset_base, data_root, split_config, batch_size=args.batch_size

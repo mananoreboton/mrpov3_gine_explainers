@@ -1,7 +1,7 @@
 """
 Classify the test set on the trained GNN.
-Loads a saved checkpoint from results/trainings/<timestamp>/ (latest by mtime, or --trainings_timestamp) and reports test accuracy.
-Saves per-sample results to results/classifications/<timestamp>/ for report generation.
+Loads a saved checkpoint from results/trainings/ and reports test accuracy.
+Saves per-sample results to results/classifications/ for report generation.
 Usage:
   uv run python evaluate.py [--data_root /path/to/snapshot] [--checkpoint best_gnn.pt] [--fold_index 0]
 """
@@ -13,6 +13,7 @@ from pathlib import Path
 
 import torch
 from mprov3_gine_explainer_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
     DEFAULT_BATCH_SIZE,
     DEFAULT_DATA_ROOT,
     DEFAULT_DROPOUT,
@@ -29,8 +30,8 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_TRAIN_SPLIT_FILE,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
     DEFAULT_VAL_SPLIT_FILE,
-    PYG_DATA_FILENAME,
     resolve_checkpoint_path,
+    resolve_dataset_dir,
     RESULTS_CLASSIFICATIONS,
     RESULTS_DATASETS,
     SplitConfig,
@@ -39,7 +40,7 @@ from mprov3_gine_explainer_defaults import (
 from evaluation import evaluate_test_with_predictions, print_test_report
 from loaders import create_data_loaders
 from model import MProGNN
-from utils import RunLogger, get_latest_timestamp_dir, run_timestamp
+from utils import RunLogger, log_overwrite_if_exists
 
 
 def _parse_args() -> argparse.Namespace:
@@ -56,22 +57,13 @@ def _parse_args() -> argparse.Namespace:
         "--results_root",
         type=str,
         default=None,
-        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); uses latest trainings/ and datasets/, writes to classifications/<timestamp>/.",
+        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); reads trainings/ and datasets/, writes to classifications/.",
     )
     parser.add_argument(
         "--checkpoint",
         type=str,
         default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
-        help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}); loaded from latest results_root/trainings/<timestamp>/.",
-    )
-    parser.add_argument(
-        "--trainings_timestamp",
-        type=str,
-        default=None,
-        help=(
-            "Load checkpoint from results_root/trainings/<this_timestamp>/ "
-            "(default: latest training run by mtime)."
-        ),
+        help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}); loaded from results_root/trainings/.",
     )
     parser.add_argument(
         "--train_split_file",
@@ -143,17 +135,10 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    checkpoint_path = resolve_checkpoint_path(
-        results_root,
-        args.checkpoint,
-        trainings_timestamp=args.trainings_timestamp,
-    )
-
+    checkpoint_path = resolve_checkpoint_path(results_root, args.checkpoint)
+    dataset_dir = resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
-    latest_dataset = get_latest_timestamp_dir(dataset_base)
-    if latest_dataset is None or not (latest_dataset / PYG_DATA_FILENAME).exists():
-        raise FileNotFoundError(f"No dataset found under {dataset_base}. Run build_dataset.py first.")
-    dataset_name = latest_dataset.name
+    dataset_name = BUILT_DATASET_FOLDER_NAME
 
     split_config = SplitConfig(
         train_file=args.train_split_file,
@@ -181,8 +166,7 @@ def main() -> None:
 
     test_metrics, results = evaluate_test_with_predictions(model, test_loader, device)
 
-    ts = run_timestamp()
-    out_dir = results_root / RESULTS_CLASSIFICATIONS / ts
+    out_dir = results_root / RESULTS_CLASSIFICATIONS
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "evaluate.log"
     results_path = out_dir / "evaluation_results.json"
@@ -200,14 +184,14 @@ def main() -> None:
             for pdb_id, real, pred in results
         ],
     }
-    results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
     with RunLogger(log_path) as log:
+        log_overwrite_if_exists(results_path, log.log)
         log.log(f"Checkpoint: {checkpoint_path}")
-        log.log(f"Dataset: {dataset_base / dataset_name}")
+        log.log(f"Dataset: {dataset_dir}")
         log.log(f"Test set size: {len(test_loader.dataset)}")
         log.log(f"Test accuracy (Category): {test_metrics.accuracy:.4f}")
         print_test_report(test_metrics)
+        results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         log.log(f"Results saved to {results_path}")
         log.log(f"Log written to {log_path}")
 

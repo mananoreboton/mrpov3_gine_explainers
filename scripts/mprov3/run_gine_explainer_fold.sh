@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# One fold: full GINE chain (run_gine_fold.sh) then explainer chain (run_explainer_fold.sh)
-# with the training timestamp captured so the explainer matches this fold's checkpoint.
+# One fold: full GINE chain (run_gine_fold.sh) then explainer chain (run_explainer_fold.sh).
 #
 # Usage:
 #   ./scripts/mprov3/run_gine_explainer_fold.sh [-m|--include-misclassified] <fold_index>
@@ -18,6 +17,4 @@ mprov3_set_positional_from_mprov3_args
 fold="${1:?Usage: $0 [-m|--include-misclassified] <fold_index>}"
 
 "$MPROV3_SCRIPT_DIR/run_gine_fold.sh" "$fold"
-TRAIN_TS="$(mprov3_latest_training_ts)"
-echo "Using trainings_timestamp=$TRAIN_TS for explainer"
-"$MPROV3_SCRIPT_DIR/run_explainer_fold.sh" "$fold" "$TRAIN_TS"
+"$MPROV3_SCRIPT_DIR/run_explainer_fold.sh" "$fold"

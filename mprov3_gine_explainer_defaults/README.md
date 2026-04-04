@@ -7,6 +7,8 @@ Single source of truth for configuration shared by:
 
 Modules: `data_path_defaults`, `gine_architecture`, `gine_project_paths`, `split_config`, `pyg_explainer`, `pyg_mask_types`, `explainer_algorithm_defaults`, `training_defaults`, `results_path_resolution`, …
 
+**Results paths:** GINE and explainer pipelines use a **flat** layout under each project’s `results/` (e.g. `datasets/data.pt`, `trainings/best_gnn.pt`, `explanations/<explainer>/`). Helpers `resolve_checkpoint_path`, `resolve_dataset_dir`, `explanations_run_dir`, and `visualizations_run_dir` encode this layout.
+
 **No heavy dependencies** (stdlib only). Add as a path dependency from sibling projects:
 
 ```toml

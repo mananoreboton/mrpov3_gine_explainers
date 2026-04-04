@@ -1,7 +1,7 @@
 """
 Create an HTML report for a previous run of evaluate.py.
 
-By default uses the most recent results/classifications/<timestamp>/ and writes
+By default uses results/classifications/evaluation_results.json and writes
 the report (index.html, graphs/, per-sample HTML) into that same folder.
 """
 
@@ -15,6 +15,7 @@ from typing import Any, List
 import torch
 
 from mprov3_gine_explainer_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
     DEFAULT_RESULTS_ROOT,
     PYG_DATA_FILENAME,
     PYG_PDB_ORDER_FILENAME,
@@ -22,7 +23,7 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_DATASETS,
 )
 from dataset import MProV3Dataset, load_dataset_pdb_order
-from utils import RunLogger, get_latest_timestamp_dir, html_document, html_escape
+from utils import RunLogger, log_overwrite_dir_if_nonempty, html_document, html_escape
 from visualize_graphs import draw_graph
 
 
@@ -109,7 +110,7 @@ def main() -> None:
         "--results",
         type=str,
         default=None,
-        help=f"Path to evaluation_results.json (default: latest under {DEFAULT_RESULTS_ROOT}/{RESULTS_CLASSIFICATIONS}/<timestamp>/)",
+        help=f"Path to evaluation_results.json (default: {DEFAULT_RESULTS_ROOT}/{RESULTS_CLASSIFICATIONS}/evaluation_results.json)",
     )
     args = parser.parse_args()
 
@@ -122,17 +123,12 @@ def main() -> None:
             results_path = project_root / results_path
         report_dir = results_path.parent
     else:
-        latest_run = get_latest_timestamp_dir(classifications_base)
-        if latest_run is None:
+        results_path = classifications_base / "evaluation_results.json"
+        if not results_path.is_file():
             raise FileNotFoundError(
-                f"No classification run found under {classifications_base}. Run evaluate.py first."
+                f"evaluation_results.json not found at {results_path}. Run evaluate.py first."
             )
-        results_path = latest_run / "evaluation_results.json"
-        if not results_path.exists():
-            raise FileNotFoundError(
-                f"evaluation_results.json not found in {latest_run}. Run evaluate.py first."
-            )
-        report_dir = latest_run
+        report_dir = classifications_base
 
     payload: Any = json.loads(results_path.read_text(encoding="utf-8"))
     dataset_name = payload["dataset_name"]
@@ -140,16 +136,27 @@ def main() -> None:
     accuracy = float(payload["accuracy"])
     eval_timestamp = payload.get("timestamp", "unknown")
 
-    results_root = payload.get("results_root")
-    if results_root:
-        dataset_root = Path(results_root) / RESULTS_DATASETS
+    results_root_str = payload.get("results_root")
+    if results_root_str:
+        dataset_root = Path(results_root_str) / RESULTS_DATASETS
     else:
         dataset_root = Path(payload["data_root"])
-    if not (dataset_root / dataset_name / PYG_DATA_FILENAME).exists():
-        raise FileNotFoundError(f"Dataset not found at {dataset_root / dataset_name}")
 
-    ds = MProV3Dataset(root=str(dataset_root), dataset_name=dataset_name)
-    pdb_order = load_dataset_pdb_order(dataset_root, dataset_name)
+    flat_pt = dataset_root / PYG_DATA_FILENAME
+    nested_pt = dataset_root / dataset_name / PYG_DATA_FILENAME
+    if flat_pt.is_file():
+        load_root = dataset_root
+        load_name = BUILT_DATASET_FOLDER_NAME
+    elif nested_pt.is_file():
+        load_root = dataset_root
+        load_name = dataset_name
+    else:
+        raise FileNotFoundError(
+            f"Dataset not found: expected {flat_pt} or legacy {nested_pt}"
+        )
+
+    ds = MProV3Dataset(root=str(load_root), dataset_name=load_name)
+    pdb_order = load_dataset_pdb_order(load_root, load_name)
     if pdb_order is None:
         raise ValueError(f"{PYG_PDB_ORDER_FILENAME} missing; cannot resolve PDB IDs to graphs.")
     pdb_to_idx = {p: i for i, p in enumerate(pdb_order)}
@@ -161,9 +168,10 @@ def main() -> None:
     written_entries: List[dict] = []
 
     with RunLogger(log_path) as log:
+        log_overwrite_dir_if_nonempty(graphs_dir, log.log)
         log.log(f"Results: {results_path}")
         log.log(f"Report directory: {report_dir}")
-        log.log(f"Dataset: {dataset_root / dataset_name}")
+        log.log(f"Dataset: {load_root / load_name}")
         log.log(f"Writing report for {len(results_list)} samples")
 
         for rec in results_list:

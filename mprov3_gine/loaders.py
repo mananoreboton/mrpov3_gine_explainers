@@ -33,7 +33,8 @@ def create_data_loaders(
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Build train, validation, and test DataLoaders. Loads the PyG dataset from
-    dataset_root/split_config.dataset_name (must exist; run build_dataset.py first).
+    dataset_root/split_config.dataset_name (typically dataset_root=.../results/datasets
+    and dataset_name=\".\" / BUILT_DATASET_FOLDER_NAME; run build_dataset.py first).
     Splits are read from data_root/Splits/ (raw MPro snapshot).
     """
     dataset = MProV3Dataset(

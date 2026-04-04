@@ -2,10 +2,10 @@
 """
 Run explainer(s) on the trained GINE: load model and dataset from mprov3_gine/results,
 generate graph-level explanations, compute fidelity.
-Outputs go to results/explanations/<timestamp>/<explainer>/.
+Outputs go to results/explanations/<explainer>/.
 
-After all explainers run, writes comparison_report.json and comparison_report.html at
-results/explanations/<timestamp>/.
+After all explainers run, writes comparison_report.json and comparison_report.html under
+results/explanations/.
 
 Usage:
   uv run python scripts/run_explanations.py
@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -30,6 +31,7 @@ if _GNN_PROJECT_ROOT.exists() and str(_GNN_PROJECT_ROOT) not in sys.path:
 
 import torch
 from mprov3_gine_explainer_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
     DEFAULT_DROPOUT,
     DEFAULT_EDGE_DIM,
     DEFAULT_GNN_EXPLAINER_EPOCHS,
@@ -48,6 +50,7 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_VAL_SPLIT_FILE,
     RESULTS_DATASETS,
     RESULTS_DIR_NAME,
+    RESULTS_EXPLANATIONS,
     SplitConfig,
 )
 
@@ -59,7 +62,6 @@ from mprov3_explainer import (
     resolve_checkpoint_path,
     resolve_dataset_dir,
     run_explanations,
-    run_timestamp,
     validate_explainer,
     write_comparison_report_html,
 )
@@ -99,16 +101,7 @@ def _parse_args() -> argparse.Namespace:
         "--checkpoint",
         type=str,
         default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
-        help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
-    )
-    parser.add_argument(
-        "--trainings_timestamp",
-        type=str,
-        default=None,
-        help=(
-            "Use results_root/trainings/<this_timestamp>/ for the checkpoint "
-            "(default: latest training run by mtime)."
-        ),
+        help=f"Checkpoint filename under results_root/trainings/ (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
     )
     parser.add_argument(
         "--train_split_file", type=str, default=DEFAULT_TRAIN_SPLIT_FILE,
@@ -213,14 +206,10 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    checkpoint_path = resolve_checkpoint_path(
-        results_root,
-        args.checkpoint,
-        trainings_timestamp=args.trainings_timestamp,
-    )
-    dataset_dir = resolve_dataset_dir(results_root)
-    dataset_name = dataset_dir.name
+    checkpoint_path = resolve_checkpoint_path(results_root, args.checkpoint)
+    resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
+    dataset_name = BUILT_DATASET_FOLDER_NAME
 
     from loaders import create_data_loaders
     from model import MProGNN
@@ -253,7 +242,6 @@ def main() -> None:
     model.eval()
 
     explainer_results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
-    ts = run_timestamp()
 
     # Collect per-explainer summaries for the comparison report
     all_summaries: dict[str, dict] = {}
@@ -330,7 +318,9 @@ def main() -> None:
         print(f"Explained {len(results)} graphs ({n_valid} valid) in {wall_time:.1f}s.")
 
         # Save per-explainer report + masks
-        out_path = explanations_run_dir(explainer_results_root, ts, explainer_name)
+        out_path = explanations_run_dir(explainer_results_root, explainer_name)
+        if out_path.exists() and any(out_path.iterdir()):
+            print(f"[INFO] Output exists; overwriting under: {out_path}", flush=True)
         out_path.mkdir(parents=True, exist_ok=True)
 
         per_graph_entries = []
@@ -408,10 +398,11 @@ def main() -> None:
         all_per_graph[explainer_name] = per_graph_entries
 
     # Write comparison report
-    comparison_path = explainer_results_root / "explanations" / ts
+    comparison_path = explainer_results_root / RESULTS_EXPLANATIONS
     comparison_path.mkdir(parents=True, exist_ok=True)
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     comparison = {
-        "timestamp": ts,
+        "generated_at": generated_at,
         "explainers": explainer_names,
         "per_explainer": all_summaries,
         "per_graph_per_explainer": all_per_graph,
@@ -428,7 +419,6 @@ def main() -> None:
     )
     print(f"\nComparison report: {comparison_path / 'comparison_report.json'}")
     print(f"Comparison HTML:   {html_path}")
-    print(f"Run timestamp: {ts}")
 
 
 if __name__ == "__main__":

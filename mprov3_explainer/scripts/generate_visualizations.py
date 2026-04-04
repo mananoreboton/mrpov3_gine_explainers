@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
 Generate visualization report from a previous explanation run.
-Reads explanation_report.json and masks from results/explanations/<timestamp>/<explainer>/,
+Reads explanation_report.json and masks from results/explanations/<explainer>/,
 draws 2D molecules with bond/atom coloring, writes index.html per explainer and a
-cross-explainer comparison.html at the timestamp level.
+cross-explainer comparison.html under results/visualizations/.
 
 Usage:
   uv run python scripts/generate_visualizations.py
   uv run python scripts/generate_visualizations.py --explainers GNNEXPL GRADEXPINODE
-  uv run python scripts/generate_visualizations.py --timestamp 2026-03-28_120000
 """
 
 from __future__ import annotations
@@ -31,16 +30,15 @@ from mprov3_gine_explainer_defaults import (
     MPRO_LIGAND_SDF_SUBDIR,
     RESULTS_DIR_NAME,
     RESULTS_EXPLANATIONS,
+    RESULTS_VISUALIZATIONS,
 )
 
 from mprov3_explainer import (
     AVAILABLE_EXPLAINERS,
     explanations_run_dir,
-    run_timestamp,
     validate_explainer,
     visualizations_run_dir,
 )
-from mprov3_explainer.paths import get_latest_timestamp_dir
 from mprov3_explainer.visualize import (
     draw_molecule_with_mask,
     write_comparison_index_html,
@@ -48,16 +46,15 @@ from mprov3_explainer.visualize import (
 )
 
 
-def _explainers_present_in_run(explanations_ts_dir: Path) -> list[str]:
+def _explainers_present(explanations_base: Path) -> list[str]:
     """
-    Registered explainer names that have a completed run under this timestamp
-    (report + masks/). Used when --explainers is omitted so partial runs do not
-    spam "Skip …: no folder" for every missing method.
+    Registered explainer names that have a completed run (report + masks/).
+    Used when --explainers is omitted so partial runs do not spam skips.
     """
     present: list[str] = []
-    if not explanations_ts_dir.is_dir():
+    if not explanations_base.is_dir():
         return present
-    for sub in sorted(explanations_ts_dir.iterdir()):
+    for sub in sorted(explanations_base.iterdir()):
         if not sub.is_dir():
             continue
         name = sub.name
@@ -85,12 +82,8 @@ def _parse_args() -> argparse.Namespace:
         "--explainers", type=str, nargs="*", default=None,
         help=(
             "Explainers to visualize. If omitted, discover explainer folders "
-            "present under the chosen explanation timestamp (recommended for partial runs)."
+            "under results/explanations/ (recommended for partial runs)."
         ),
-    )
-    parser.add_argument(
-        "--timestamp", type=str, default=None,
-        help="Explanation run folder name (default: latest).",
     )
     parser.add_argument("--data_root", type=str, default=None)
     parser.add_argument("--results_root", type=str, default=None)
@@ -107,33 +100,20 @@ def main() -> None:
             f"Explanations folder not found: {explanations_base}. Run run_explanations.py first."
         )
 
-    if args.timestamp:
-        timestamp_dir = explanations_base / args.timestamp
-        if not timestamp_dir.is_dir():
-            raise FileNotFoundError(f"Explanation run not found: {timestamp_dir}")
-        ts = args.timestamp
-    else:
-        timestamp_dir = get_latest_timestamp_dir(explanations_base)
-        if timestamp_dir is None:
-            raise FileNotFoundError(
-                f"No timestamped run found under {explanations_base}."
-            )
-        ts = timestamp_dir.name
-
     if args.explainers:
         explainer_names = list(args.explainers)
     elif args.explainer is not None:
         explainer_names = [args.explainer]
     else:
-        explainer_names = _explainers_present_in_run(timestamp_dir)
+        explainer_names = _explainers_present(explanations_base)
         if not explainer_names:
             raise FileNotFoundError(
-                f"No explainer outputs found under {timestamp_dir} "
+                f"No explainer outputs found under {explanations_base} "
                 f"(need explanation_report.json and masks/ per explainer). "
                 f"Run run_explanations.py first, or pass --explainers explicitly."
             )
         print(
-            f"Using explainers present in {ts}: {', '.join(explainer_names)}",
+            f"Using explainers present: {', '.join(explainer_names)}",
             flush=True,
         )
 
@@ -147,8 +127,6 @@ def main() -> None:
     if not sdf_dir.exists():
         raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
 
-    new_ts = run_timestamp()
-
     # For cross-explainer comparison grid
     comparison_data: dict = {
         "explainers": [],
@@ -159,7 +137,7 @@ def main() -> None:
     all_graph_ids: set[str] = set()
 
     for explainer_name in explainer_names:
-        explanation_dir = explanations_run_dir(results_root, ts, explainer_name)
+        explanation_dir = explanations_run_dir(results_root, explainer_name)
         if not explanation_dir.is_dir():
             print(f"  Skip {explainer_name}: no folder at {explanation_dir}")
             continue
@@ -170,7 +148,9 @@ def main() -> None:
             continue
         report = json.loads(report_path.read_text(encoding="utf-8"))
 
-        vis_out = visualizations_run_dir(results_root, new_ts, explainer_name)
+        vis_out = visualizations_run_dir(results_root, explainer_name)
+        if vis_out.exists() and any(vis_out.iterdir()):
+            print(f"[INFO] Output exists; overwriting under: {vis_out}", flush=True)
         graphs_dir = vis_out / "graphs"
         graphs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -179,7 +159,6 @@ def main() -> None:
             print(f"  Skip {explainer_name}: masks folder not found at {masks_dir}")
             continue
 
-        report["source_explanation_timestamp"] = ts
         report["explainer"] = explainer_name
         drawn = 0
 
@@ -240,10 +219,13 @@ def main() -> None:
 
     # Write cross-explainer comparison page
     comparison_data["graph_ids"] = sorted(all_graph_ids)
-    vis_root = results_root / "visualizations" / new_ts
+    vis_root = results_root / RESULTS_VISUALIZATIONS
+    vis_root.mkdir(parents=True, exist_ok=True)
+    cmp_html = vis_root / "comparison.html"
+    if cmp_html.exists():
+        print(f"[INFO] Output exists; overwriting: {cmp_html}", flush=True)
     write_comparison_index_html(vis_root, comparison_data)
-    print(f"\nComparison page: {vis_root / 'comparison.html'}")
-    print(f"Run timestamp: {new_ts}")
+    print(f"\nComparison page: {cmp_html}")
 
 
 if __name__ == "__main__":

@@ -33,7 +33,9 @@ RESULTS_CHECK_FORMAT = "check_format"
 CHECK_FORMAT_DATASETS_SUBDIR = "datasets"
 CHECK_FORMAT_RAW_DATA_SUBDIR = "raw_data"
 
-# --- Built PyG artifacts (under results/datasets/<timestamp>/ or similar) ---
+# --- Built PyG artifacts (under results/datasets/; data.pt at that level) ---
+# MProV3Dataset(root=.../results/datasets, dataset_name=BUILT_DATASET_FOLDER_NAME) loads data.pt there.
+BUILT_DATASET_FOLDER_NAME = "."
 PYG_DATA_FILENAME = "data.pt"
 PYG_PDB_ORDER_FILENAME = "pdb_order.txt"
 DEFAULT_TRAINING_CHECKPOINT_FILENAME = "best_gnn.pt"

@@ -31,14 +31,10 @@ from mprov3_gine_explainer_defaults.training_defaults import (
     DEFAULT_TRAINING_LR,
 )
 from mprov3_gine_explainer_defaults.results_path_resolution import (
-    RUN_TIMESTAMP_FMT,
     explanations_run_dir,
-    get_latest_timestamp_dir,
-    read_dataset_name_from_train_log,
     resolve_checkpoint_path,
     resolve_dataset_dir,
     resolve_training_checkpoint_and_dataset_name,
-    run_timestamp,
     visualizations_run_dir,
 )
 from mprov3_gine_explainer_defaults.gine_project_paths import (
@@ -50,6 +46,7 @@ from mprov3_gine_explainer_defaults.gine_project_paths import (
 )
 from mprov3_gine_explainer_defaults.split_config import SplitConfig
 from mprov3_gine_explainer_defaults.data_path_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
     CHECK_FORMAT_DATASETS_SUBDIR,
     CHECK_FORMAT_RAW_DATA_SUBDIR,
     DEFAULT_MPRO_SNAPSHOT_DIR_NAME,
@@ -126,10 +123,7 @@ __all__ = [
     "PYG_PDB_ORDER_FILENAME",
     "DEFAULT_TRAINING_CHECKPOINT_FILENAME",
     "DEFAULT_PYG_DATASET_NAME",
-    "RUN_TIMESTAMP_FMT",
-    "run_timestamp",
-    "get_latest_timestamp_dir",
-    "read_dataset_name_from_train_log",
+    "BUILT_DATASET_FOLDER_NAME",
     "resolve_checkpoint_path",
     "resolve_dataset_dir",
     "resolve_training_checkpoint_and_dataset_name",

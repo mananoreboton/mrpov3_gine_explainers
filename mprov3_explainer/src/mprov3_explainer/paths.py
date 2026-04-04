@@ -3,21 +3,17 @@
 from __future__ import annotations
 
 from mprov3_gine_explainer_defaults import (
-    RUN_TIMESTAMP_FMT,
     explanations_run_dir,
-    get_latest_timestamp_dir,
     resolve_checkpoint_path,
     resolve_dataset_dir,
-    run_timestamp,
+    resolve_training_checkpoint_and_dataset_name,
     visualizations_run_dir,
 )
 
 __all__ = [
-    "RUN_TIMESTAMP_FMT",
-    "run_timestamp",
-    "get_latest_timestamp_dir",
     "resolve_checkpoint_path",
     "resolve_dataset_dir",
+    "resolve_training_checkpoint_and_dataset_name",
     "explanations_run_dir",
     "visualizations_run_dir",
 ]

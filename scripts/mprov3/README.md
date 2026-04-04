@@ -27,10 +27,10 @@ These scripts do **not** run `check_all.sh` §2 (defaults package constant check
 
 | Script | Purpose |
 |--------|---------|
-| [`smoke_gine_explainer.sh`](smoke_gine_explainer.sh) | Full GINE chain for **fold 0**, **1** training epoch by default, **`run_explanations.py --max_graphs 1`**, then **`generate_visualizations.py`** without `--timestamp` (uses latest explanation run, like `check_all.sh`). |
-| [`run_gine_fold.sh`](run_gine_fold.sh) | Full GINE chain for **`fold_index`**. Prints **`TRAIN_TS=<timestamp>`** at the end (latest `mprov3_gine/results/trainings/<ts>/` after this run). |
-| [`run_explainer_fold.sh`](run_explainer_fold.sh) | **`run_explanations.py`** on the **full test set** for **`fold_index`**, then **`generate_visualizations.py --timestamp`** matching the captured explanation run. Optional **`trainings_timestamp`** so the checkpoint matches a specific training folder when it is not the latest. |
-| [`run_gine_explainer_fold.sh`](run_gine_explainer_fold.sh) | Runs **`run_gine_fold.sh`** then **`run_explainer_fold.sh`** with the training timestamp captured after training (safe across multiple folds). |
+| [`smoke_gine_explainer.sh`](smoke_gine_explainer.sh) | Full GINE chain for **fold 0**, **1** training epoch by default, **`run_explanations.py --max_graphs 1`**, then **`generate_visualizations.py`** (flat `results/` paths; same idea as `check_all.sh`). |
+| [`run_gine_fold.sh`](run_gine_fold.sh) | Full GINE chain for **`fold_index`** (writes under fixed `mprov3_gine/results/` paths). |
+| [`run_explainer_fold.sh`](run_explainer_fold.sh) | **`run_explanations.py`** on the **full test set** for **`fold_index`**, then **`generate_visualizations.py`**. |
+| [`run_gine_explainer_fold.sh`](run_gine_explainer_fold.sh) | Runs **`run_gine_fold.sh`** then **`run_explainer_fold.sh`** for the same fold. |
 | [`run_all_folds.sh`](run_all_folds.sh) | Loops **`run_gine_explainer_fold.sh`** for folds **`0 .. NUM_FOLDS-1`**. |
 
 Shared logic lives in [`lib_common.sh`](lib_common.sh) (sourced, not executed alone).
@@ -68,9 +68,8 @@ SKIP_SYNC=1 ./scripts/mprov3/smoke_gine_explainer.sh
 # One fold: GINE only
 ./scripts/mprov3/run_gine_fold.sh 2
 
-# One fold: explainer only (uses latest training run unless you pass the timestamp)
+# One fold: explainer only (checkpoint: mprov3_gine/results/trainings/best_gnn.pt)
 ./scripts/mprov3/run_explainer_fold.sh 2
-./scripts/mprov3/run_explainer_fold.sh 2 2026-04-01_120000
 
 # Full GINE + explainer for fold 2
 ./scripts/mprov3/run_gine_explainer_fold.sh 2
@@ -81,10 +80,11 @@ NUM_FOLDS=5 ./scripts/mprov3/run_all_folds.sh
 
 ## Python flags used by the explainer step
 
-- **`--results_root`** points at **`mprov3_gine/results`** so checkpoints and datasets match training.
-- **`--trainings_timestamp`** (optional) selects **`mprov3_gine/results/trainings/<timestamp>/`**; see `resolve_checkpoint_path` in **`mprov3_gine_explainer_defaults`** and **`run_explanations.py`** / **`evaluate.py`**.
+- **`--results_root`** points at **`mprov3_gine/results`** so checkpoints (`trainings/best_gnn.pt`) and datasets (`datasets/data.pt`) match training.
 
 Explainer **artifacts** (reports, masks, comparison HTML) are under **`mprov3_explainer/results/`**, not under GINE results.
+
+**Migration:** Older runs used timestamped subfolders under `results/`; those paths are no longer read automatically. Move or rebuild artifacts into the flat layout (see **`mprov3_gine/README.md`** and **`mprov3_explainer/README.md`**).
 
 ## Related docs
 

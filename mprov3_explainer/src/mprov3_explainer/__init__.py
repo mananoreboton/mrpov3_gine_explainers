@@ -13,10 +13,9 @@ from mprov3_explainer.explainers import (
 )
 from mprov3_explainer.paths import (
     explanations_run_dir,
-    get_latest_timestamp_dir,
     resolve_checkpoint_path,
     resolve_dataset_dir,
-    run_timestamp,
+    resolve_training_checkpoint_and_dataset_name,
     visualizations_run_dir,
 )
 from mprov3_explainer.pipeline import (
@@ -43,10 +42,9 @@ __all__ = [
     "get_spec",
     "validate_explainer",
     "explanations_run_dir",
-    "get_latest_timestamp_dir",
     "resolve_checkpoint_path",
     "resolve_dataset_dir",
-    "run_timestamp",
+    "resolve_training_checkpoint_and_dataset_name",
     "visualizations_run_dir",
     "ExplanationResult",
     "aggregate_fidelity",

@@ -24,13 +24,13 @@ def write_comparison_report_html(
     """Write ``comparison_report.html`` next to ``comparison_report.json``.
 
     *comparison* must include ``per_explainer`` (dict of summary dicts) and may
-    include ``timestamp`` and ``explainers`` (list of names for row order).
+    include ``generated_at`` or legacy ``timestamp``, and ``explainers`` (row order).
     """
     per_explainer = comparison.get("per_explainer") or {}
     if not isinstance(per_explainer, dict):
         raise TypeError("comparison['per_explainer'] must be a dict")
 
-    ts = comparison.get("timestamp")
+    ts = comparison.get("generated_at") or comparison.get("timestamp")
     order = comparison.get("explainers")
     if isinstance(order, list) and order:
         names = [str(x) for x in order if str(x) in per_explainer]

@@ -40,6 +40,3 @@ run_gine_py evaluate.py --num_folds "$nf" --fold_index "$fold"
 
 echo "==> create_evaluation_report.py"
 run_gine_py create_evaluation_report.py
-
-ts="$(mprov3_latest_training_ts)"
-echo "TRAIN_TS=$ts"

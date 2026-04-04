@@ -1,8 +1,8 @@
 """
 Validate that a pre-built PyG dataset (data.pt) is compatible with this project.
 
-Expects the dataset under a timestamped folder: dataset_root / dataset_name / data.pt
-(e.g. results/datasets/<timestamp>/data.pt). By default uses the latest such folder.
+Expects ``results/datasets/data.pt`` (flat layout). Legacy timestamped subfolders under
+``results/datasets/<timestamp>/`` are not used; migrate or rebuild with build_dataset.py.
 
 Checks performed:
 - dataset_root / dataset_name / data.pt exists and can be loaded via MProV3Dataset
@@ -49,7 +49,7 @@ from dataset import (
     get_train_val_test_indices,
     load_dataset_pdb_order,
 )
-from utils import RunLogger, get_latest_timestamp_dir, run_timestamp
+from utils import RunLogger
 
 
 @dataclass
@@ -478,9 +478,9 @@ def run_checks(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Validate that a PyG dataset (data.pt) under a timestamped folder "
-            "(e.g. results/datasets/<timestamp>/) is compatible with this project's "
-            "training and evaluation scripts. Uses latest timestamp by default."
+            "Validate that results/datasets/data.pt (flat layout) is compatible with "
+            "training and evaluation. Optional --data_root points at the folder that "
+            "directly contains data.pt, or at a legacy per-run subfolder under datasets/."
         )
     )
     parser.add_argument(
@@ -488,9 +488,9 @@ def _parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help=(
-            "Path to the folder containing timestamped dataset(s) (e.g. results/datasets), "
-            "or path to a specific dataset folder (e.g. results/datasets/2025-03-14_120000). "
-            f"Default: {DEFAULT_RESULTS_ROOT}/datasets (uses latest timestamp subfolder)"
+            f"Folder that directly contains data.pt (e.g. {DEFAULT_RESULTS_ROOT}/datasets), "
+            "or a legacy folder like results/datasets/<timestamp>/. "
+            f"Default: {DEFAULT_RESULTS_ROOT}/datasets"
         ),
     )
     parser.add_argument(
@@ -541,34 +541,28 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     results_root = Path(DEFAULT_RESULTS_ROOT)
-    dataset_root = None
-    dataset_name = None
+    dataset_root: Path | None = None
+    dataset_name: str | None = None
 
     if args.data_root:
         p = Path(args.data_root)
         if (p / PYG_DATA_FILENAME).exists():
             dataset_root = p.parent
             dataset_name = p.name
-        else:
-            latest = get_latest_timestamp_dir(p)
-            if latest is not None:
-                dataset_root = p
-                dataset_name = latest.name
     else:
         dataset_base = results_root / RESULTS_DATASETS
-        latest = get_latest_timestamp_dir(dataset_base)
-        if latest is not None:
-            dataset_root = dataset_base
-            dataset_name = latest.name
+        if (dataset_base / PYG_DATA_FILENAME).is_file():
+            dataset_root = dataset_base.parent
+            dataset_name = dataset_base.name
 
     if dataset_root is None or dataset_name is None:
         missing_base = Path(args.data_root) if args.data_root else results_root / RESULTS_DATASETS
         msg = (
-            f"No timestamped dataset folder found under {missing_base}. "
-            "Run build_dataset.py first; it writes to results/datasets/<timestamp>/."
+            f"No PyG dataset at {missing_base / PYG_DATA_FILENAME}. "
+            "Run build_dataset.py (writes results/datasets/data.pt). "
+            "Legacy results/datasets/<timestamp>/ layouts are no longer auto-detected."
         )
-        ts = run_timestamp()
-        log_dir = results_root / RESULTS_CHECK_FORMAT / CHECK_FORMAT_DATASETS_SUBDIR / ts
+        log_dir = results_root / RESULTS_CHECK_FORMAT / CHECK_FORMAT_DATASETS_SUBDIR
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / "check_output.log"
         with RunLogger(log_path) as log:
@@ -578,8 +572,7 @@ def main() -> None:
 
     splits_root = Path(args.splits_root or DEFAULT_DATA_ROOT)
 
-    ts = run_timestamp()
-    log_dir = results_root / RESULTS_CHECK_FORMAT / CHECK_FORMAT_DATASETS_SUBDIR / ts
+    log_dir = results_root / RESULTS_CHECK_FORMAT / CHECK_FORMAT_DATASETS_SUBDIR
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "check_output.log"
 

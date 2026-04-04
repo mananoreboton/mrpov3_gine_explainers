@@ -54,7 +54,7 @@ MEX_MISCLASS_ARGS=()
 mprov3_misclassified_arg
 
 echo "==> run_explanations.py --max_graphs 1 (smoke)"
-mprov3_run_explanations_capture_ts \
+run_mex_py scripts/run_explanations.py \
   "${EXPLAIN_CLI_ARGS[@]}" \
   ${MEX_MISCLASS_ARGS[@]+"${MEX_MISCLASS_ARGS[@]}"} \
   --results_root "$GNN_DIR/results" \
@@ -62,5 +62,5 @@ mprov3_run_explanations_capture_ts \
   --fold_index "$fold" \
   --max_graphs 1
 
-echo "==> generate_visualizations.py (latest explanation run; matches check_all.sh)"
+echo "==> generate_visualizations.py"
 run_mex_py scripts/generate_visualizations.py "${EXPLAIN_CLI_ARGS[@]}"

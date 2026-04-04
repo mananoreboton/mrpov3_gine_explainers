@@ -1,6 +1,6 @@
 """
 Explainer registry: available explainers and builder callables.
-Output paths use <timestamp>/<explainer_name>/ under results/explanations and results/visualizations.
+Output paths use <explainer_name>/ under results/explanations and results/visualizations.
 
 Supports eight PyG-native explainer configurations (see ``AVAILABLE_EXPLAINERS``).
 """

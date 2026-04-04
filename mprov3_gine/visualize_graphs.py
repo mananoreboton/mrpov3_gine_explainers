@@ -34,13 +34,14 @@ from rdkit.Chem import rdDepictor
 from rdkit.Geometry import Point3D
 
 from mprov3_gine_explainer_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
     DEFAULT_RESULTS_ROOT,
-    PYG_DATA_FILENAME,
     RESULTS_DATASETS,
     RESULTS_VISUALIZATIONS,
+    resolve_dataset_dir,
 )
 from dataset import MProV3Dataset, ORIGINAL_CATEGORY_FROM_CLASS, load_dataset_pdb_order
-from utils import RunLogger, get_latest_timestamp_dir, html_document, html_escape, run_timestamp
+from utils import RunLogger, log_overwrite_dir_if_nonempty, html_document, html_escape
 
 # Image size in pixels (RDKit drawer uses this for PNG/SVG canvas).
 _DRAW_SIZE = 500
@@ -409,13 +410,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     results_root = Path(args.results_root or DEFAULT_RESULTS_ROOT)
+    dataset_dir = resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
-    latest_dataset = get_latest_timestamp_dir(dataset_base)
-    if latest_dataset is None or not (latest_dataset / PYG_DATA_FILENAME).exists():
-        raise FileNotFoundError(
-            f"No dataset found under {dataset_base}. Run build_dataset.py with --results_root {results_root} first."
-        )
-    dataset_name = latest_dataset.name
+    dataset_name = BUILT_DATASET_FOLDER_NAME
 
     ds = MProV3Dataset(root=str(dataset_base), dataset_name=dataset_name)
     pdb_order = load_dataset_pdb_order(dataset_base, dataset_name)
@@ -428,15 +425,15 @@ def main() -> None:
         pdb_ids=args.pdb_ids,
     )
 
-    ts = run_timestamp()
-    output_dir = results_root / RESULTS_VISUALIZATIONS / ts
+    output_dir = results_root / RESULTS_VISUALIZATIONS
     output_dir.mkdir(parents=True, exist_ok=True)
     log_path = output_dir / "visualize.log"
 
     index_entries: List[Tuple[str, Optional[int], Optional[float]]] = []
 
     with RunLogger(log_path) as log:
-        log.log(f"Dataset: {dataset_base / dataset_name} (latest)")
+        log_overwrite_dir_if_nonempty(output_dir, log.log)
+        log.log(f"Dataset: {dataset_dir}")
         log.log(f"Output: {output_dir}")
         log.log(f"Loaded {len(ds)} graphs; writing {len(selected_indices)} graphs")
 

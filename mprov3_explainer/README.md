@@ -2,13 +2,13 @@
 
 MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations of the trained GINE classifier. Loads the model and dataset from **mprov3_gine/results**, uses a pluggable **explainer registry** (default: all **available explainers**), and follows the **common representation** from *"Explaining the Explainers in Graph Neural Networks: a Comparative Study"* (Longa et al.): **(1) explanation masks generation** and **(2) preprocessing** (Conversion, Filtering, Normalization) applied to any explainer output before metrics.
 
-Outputs are written under **`results/<explanations|visualizations>/<timestamp>/<explainer>/`** so one run can produce results for multiple explainers under the same timestamp.
+Outputs are written under **`results/explanations/<explainer>/`** and **`results/visualizations/<explainer>/`** (flat layout; re-running overwrites after an **`[INFO]`** line).
 
-**Shell orchestration:** From the repo root, [**`scripts/mprov3/README.md`**](../scripts/mprov3/README.md) documents bash wrappers that run **`run_explanations.py`** then **`generate_visualizations.py`** in order, with fold-aware args, optional **`--trainings_timestamp`** for the GINE checkpoint, and **`-m` / `--include-misclassified`** (or **`INCLUDE_MISCLASSIFIED=1`**) to pass **`--no_correct_class_only`** into explanations.
+**Shell orchestration:** From the repo root, [**`scripts/mprov3/README.md`**](../scripts/mprov3/README.md) documents bash wrappers that run **`run_explanations.py`** then **`generate_visualizations.py`** in order, with fold-aware args and **`-m` / `--include-misclassified`** (or **`INCLUDE_MISCLASSIFIED=1`**) to pass **`--no_correct_class_only`** into explanations.
 
 ## Flow
 
-1. **Resolve paths** – From `results_root`, resolve latest `trainings/<timestamp>/best_gnn.pt` and `datasets/<timestamp>/` (contains `data.pt`). Splits (train/val/test) are read from `data_root/Splits/`.
+1. **Resolve paths** – From `results_root`, load `trainings/best_gnn.pt` and `datasets/data.pt` (flat paths). Splits (train/val/test) are read from `data_root/Splits/`.
 2. **Load model** – Instantiate `MProGNN` with the same hyperparameters as training (defaults from `mprov3_gine_explainer_defaults` / CLI), load state dict from `best_gnn.pt`, set to eval.
 3. **Build Explainer** – For each chosen explainer, the registry provides a builder (PyG `Explainer` wrapping GNNExplainer, Captum-based methods, PGExplainer, PGMExplainer, etc.).
 4. **Optional offline training** – **PGEXPL** fits its parametric edge-mask MLP on the **training** loader before any test graphs are explained (see **PGExplainer** below).
@@ -27,8 +27,8 @@ Outputs are written under **`results/<explanations|visualizations>/<timestamp>/<
 ## Input
 
 - **results_root** (default: `../mprov3_gine/results` from the project root):
-  - `trainings/<timestamp>/best_gnn.pt` – trained GINE checkpoint
-  - `datasets/<timestamp>/data.pt` – PyG dataset; `pdb_order.txt` in the same folder is used for split indexing
+  - `trainings/best_gnn.pt` – trained GINE checkpoint
+  - `datasets/data.pt` – PyG dataset; `pdb_order.txt` in the same folder is used for split indexing
 - **data_root** (default: from mprov3_gine config) – path to the raw MPro snapshot containing `Splits/` (train/val/test PDB ID lists)
 
 Model and split args (e.g. `--fold_index`, `--hidden`, `--num_layers`) must match the run that produced `best_gnn.pt`.
@@ -36,7 +36,7 @@ Model and split args (e.g. `--fold_index`, `--hidden`, `--num_layers`) must matc
 ## Output
 
 - **Stdout** – Per-graph line: `graph_id: fid+=... fid-=... [excluded]`; then mean fidelity and graph counts (total and valid).
-- **results/explanations/&lt;timestamp&gt;/&lt;explainer&gt;/** (inside mprov3_explainer; timestamp is execution time in UTC):
+- **results/explanations/&lt;explainer&gt;/** (inside mprov3_explainer):
   - `explanation_report.json` – includes:
     - `mean_fidelity_plus`, `mean_fidelity_minus`
     - `mean_pyg_characterization`
@@ -119,7 +119,7 @@ uv run python scripts/run_explanations.py \
   --data_root /path/to/MPro_snapshot
 ```
 
-Report and masks are written to `results/explanations/<timestamp>/<explainer>/` in the mprov3_explainer project root.
+Report and masks are written to `results/explanations/<explainer>/` in the mprov3_explainer project root. Comparison files are **`results/explanations/comparison_report.json`** and **`comparison_report.html`**.
 
 ### Generate visualizations (index + images)
 
@@ -129,18 +129,21 @@ After running the explainer, generate an HTML index and 2D molecular images with
 uv run python scripts/generate_visualizations.py
 ```
 
-This uses the **latest** explanation run under `results/explanations/`. If you do not pass `--explainer` / `--explainers`, it **only processes explainer folders that exist** under that run (with `explanation_report.json` and `masks/`), so partial runs (e.g. only PGEXPL) do not print a long list of “Skip …” lines. Output is written to **results/visualizations/&lt;new_timestamp&gt;/&lt;explainer&gt;/**:
+If you do not pass `--explainer` / `--explainers`, it **only processes explainer folders that exist** under `results/explanations/` (with `explanation_report.json` and `masks/`), so partial runs (e.g. only PGEXPL) do not print a long list of “Skip …” lines. Output is written to **results/visualizations/&lt;explainer&gt;/**:
 
 - `index.html` – summary (mean fidelity, num_graphs) and a grid of thumbnails linking to each graphic.
 - `graphs/mask_&lt;pdb_id&gt;.png` – 2D molecule drawn from the SDF with bonds colored by explainer importance (max of edge_mask per bond).
 
-To use a specific explainer or timestamp:
+To choose explainers explicitly:
 
 ```bash
 uv run python scripts/generate_visualizations.py --explainer GNNEXPL
-uv run python scripts/generate_visualizations.py --timestamp 2026-03-15_133711
 uv run python scripts/generate_visualizations.py --explainers GNNEXPL GRADEXPINODE
 ```
+
+Cross-explainer **`comparison.html`** is written to **`results/visualizations/comparison.html`**.
+
+**Migration:** Old outputs under `results/explanations/<timestamp>/` or `results/visualizations/<timestamp>/` are not read automatically; move files into the flat paths or re-run.
 
 Images require SDF files at `data_root/Ligand/Ligand_SDF/&lt;pdb_id&gt;_ligand.sdf`. Pass `--data_root` if your MPro snapshot is elsewhere; `--results_root` overrides the default results directory.
 
