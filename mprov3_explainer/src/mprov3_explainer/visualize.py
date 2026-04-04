@@ -196,6 +196,13 @@ def draw_molecule_with_mask(
             return False
 
 
+def draw_molecule_base(sdf_path: Path, out_path_png: Path) -> bool:
+    """
+    Load molecule from SDF and draw a plain 2D structure (no explainer highlighting).
+    """
+    return draw_molecule_with_mask(sdf_path, out_path_png=out_path_png)
+
+
 # ---------------------------------------------------------------------------
 # HTML report
 # ---------------------------------------------------------------------------

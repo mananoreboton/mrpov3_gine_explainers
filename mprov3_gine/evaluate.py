@@ -1,7 +1,7 @@
 """
 Classify the test set on the trained GNN.
 Loads a saved checkpoint from results/trainings/ and reports test accuracy.
-Saves per-sample results to results/classifications/ for report generation.
+Saves per-sample results to results/classifications/fold_<fold_index>/ for report generation.
 Usage:
   uv run python evaluate.py [--data_root /path/to/snapshot] [--checkpoint best_gnn.pt] [--fold_index 0]
 """
@@ -166,7 +166,8 @@ def main() -> None:
 
     test_metrics, results = evaluate_test_with_predictions(model, test_loader, device)
 
-    out_dir = results_root / RESULTS_CLASSIFICATIONS
+    fold_dir = f"fold_{split_config.fold_index}"
+    out_dir = results_root / RESULTS_CLASSIFICATIONS / fold_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "evaluate.log"
     results_path = out_dir / "evaluation_results.json"

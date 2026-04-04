@@ -38,5 +38,6 @@ run_gine_py train.py --num_folds "$nf" --fold_index "$fold" --epochs "${GNN_TRAI
 echo "==> evaluate.py (fold_index=$fold)"
 run_gine_py evaluate.py --num_folds "$nf" --fold_index "$fold"
 
-echo "==> create_evaluation_report.py"
-run_gine_py create_evaluation_report.py
+echo "==> create_evaluation_report.py (fold_${fold})"
+run_gine_py create_evaluation_report.py \
+  --results "results/classifications/fold_${fold}/evaluation_results.json"

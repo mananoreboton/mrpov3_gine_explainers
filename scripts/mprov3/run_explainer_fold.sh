@@ -6,7 +6,7 @@
 #   ./scripts/mprov3/run_explainer_fold.sh [-m|--include-misclassified] <fold_index>
 # Env: SKIP_SYNC=1, NUM_FOLDS (default 5), EXPLAINERS (default GNNEXPL; space-separated for several)
 # Note: run_explanations loads checkpoint/dataset from mprov3_gine/results; explanations are written
-# under mprov3_explainer/results/explanations/.
+# under mprov3_explainer/results/folds/fold_<k>/explanations/.
 
 set -euo pipefail
 

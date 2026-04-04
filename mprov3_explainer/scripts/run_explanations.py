@@ -2,10 +2,10 @@
 """
 Run explainer(s) on the trained GINE: load model and dataset from mprov3_gine/results,
 generate graph-level explanations, compute fidelity.
-Outputs go to results/explanations/<explainer>/.
+Outputs go to results/folds/fold_<fold_index>/explanations/<explainer>/.
 
 After all explainers run, writes comparison_report.json and comparison_report.html under
-results/explanations/.
+results/folds/fold_<fold_index>/explanations/.
 
 Usage:
   uv run python scripts/run_explanations.py
@@ -241,7 +241,10 @@ def main() -> None:
     )
     model.eval()
 
-    explainer_results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
+    fold_seg = f"fold_{args.fold_index}"
+    explainer_results_root = (
+        _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME / "folds" / fold_seg
+    )
 
     # Collect per-explainer summaries for the comparison report
     all_summaries: dict[str, dict] = {}

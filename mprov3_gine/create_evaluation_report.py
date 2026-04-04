@@ -110,7 +110,10 @@ def main() -> None:
         "--results",
         type=str,
         default=None,
-        help=f"Path to evaluation_results.json (default: {DEFAULT_RESULTS_ROOT}/{RESULTS_CLASSIFICATIONS}/evaluation_results.json)",
+        help=(
+            "Path to evaluation_results.json (default: fold_0 under classifications/, "
+            "then legacy flat evaluation_results.json)"
+        ),
     )
     args = parser.parse_args()
 
@@ -123,12 +126,18 @@ def main() -> None:
             results_path = project_root / results_path
         report_dir = results_path.parent
     else:
-        results_path = classifications_base / "evaluation_results.json"
-        if not results_path.is_file():
+        fold0 = classifications_base / "fold_0" / "evaluation_results.json"
+        legacy = classifications_base / "evaluation_results.json"
+        if fold0.is_file():
+            results_path = fold0
+            report_dir = fold0.parent
+        elif legacy.is_file():
+            results_path = legacy
+            report_dir = classifications_base
+        else:
             raise FileNotFoundError(
-                f"evaluation_results.json not found at {results_path}. Run evaluate.py first."
+                f"evaluation_results.json not found at {fold0} or {legacy}. Run evaluate.py first."
             )
-        report_dir = classifications_base
 
     payload: Any = json.loads(results_path.read_text(encoding="utf-8"))
     dataset_name = payload["dataset_name"]
