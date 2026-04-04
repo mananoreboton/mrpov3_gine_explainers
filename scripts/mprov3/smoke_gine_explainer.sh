@@ -50,6 +50,7 @@ echo "==> create_evaluation_report.py"
 run_gine_py create_evaluation_report.py
 
 mprov3_build_explain_cli
+MEX_MISCLASS_ARGS=()
 mprov3_misclassified_arg
 
 echo "==> run_explanations.py --max_graphs 1 (smoke)"

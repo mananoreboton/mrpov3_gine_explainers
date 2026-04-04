@@ -25,6 +25,7 @@ mprov3_maybe_uv_sync
 
 nf="${NUM_FOLDS:-5}"
 mprov3_build_explain_cli
+MEX_MISCLASS_ARGS=()
 mprov3_misclassified_arg
 
 args=(--results_root "$GNN_DIR/results" --num_folds "$nf" --fold_index "$fold")

@@ -91,10 +91,11 @@ mprov3_build_explain_cli() {
   fi
 }
 
+# Caller must run MEX_MISCLASS_ARGS=() immediately before (global array; same nounset/scoping
+# pattern as MPROV3_ARGS).
 mprov3_misclassified_arg() {
-  MEX_MISCLASS_ARGS=()
   if [[ "${INCLUDE_MISCLASSIFIED:-0}" == "1" ]]; then
-    MEX_MISCLASS_ARGS=(--no_correct_class_only)
+    MEX_MISCLASS_ARGS+=(--no_correct_class_only)
   fi
 }
 
