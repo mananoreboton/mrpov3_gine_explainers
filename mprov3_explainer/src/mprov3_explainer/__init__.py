@@ -7,6 +7,7 @@ from mprov3_explainer.device import get_device
 from mprov3_explainer.explainers import (
     AVAILABLE_EXPLAINERS,
     ExplainerSpec,
+    explainer_report_meta,
     get_builder,
     get_spec,
     validate_explainer,
@@ -38,6 +39,7 @@ __all__ = [
     "__version__",
     "AVAILABLE_EXPLAINERS",
     "ExplainerSpec",
+    "explainer_report_meta",
     "get_builder",
     "get_spec",
     "validate_explainer",

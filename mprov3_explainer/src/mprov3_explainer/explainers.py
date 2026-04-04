@@ -44,6 +44,7 @@ class ExplainerSpec:
 
     name: str
     builder: Callable[..., Any]
+    report_paragraph: str
     needs_training: bool = False
     phenomenon_only: bool = False
     produces_node_mask: bool = False
@@ -260,42 +261,83 @@ _EXPLAINER_SPECS: Dict[str, ExplainerSpec] = {
     "GRADEXPINODE": ExplainerSpec(
         name="GRADEXPINODE",
         builder=_build_gradexp_node,
+        report_paragraph=(
+            "Mask type: node-feature mask (`node_mask_type=attributes`); no edge mask. "
+            "Method: Captum Saliency—gradient of the explained output with respect to node "
+            "features (typically absolute gradients). Fast, one backward pass per explanation."
+        ),
         produces_node_mask=True,
         produces_edge_mask=False,
     ),
     "GRADEXPLEDGE": ExplainerSpec(
         name="GRADEXPLEDGE",
         builder=_build_gradexp_edge,
+        report_paragraph=(
+            "Mask type: edge mask (`edge_mask_type=object`); no node-feature mask. "
+            "Method: Captum Saliency on PyG’s differentiable edge-mask input, so importance "
+            "is the sensitivity of the prediction to each edge when message passing respects "
+            "the mask. One backward pass per explanation."
+        ),
         produces_node_mask=False,
         produces_edge_mask=True,
     ),
     "GUIDEDBP": ExplainerSpec(
         name="GUIDEDBP",
         builder=_build_guided_bp,
+        report_paragraph=(
+            "Mask type: node-feature mask (`attributes`); no edge mask. "
+            "Method: Captum Guided Backpropagation—modified ReLU backward (non-negative "
+            "gradients) for sharper input attributions than plain gradients. Requires "
+            "`torch.nn.ReLU` modules; functional activations may not hook correctly."
+        ),
         produces_node_mask=True,
         produces_edge_mask=False,
     ),
     "IGNODE": ExplainerSpec(
         name="IGNODE",
         builder=_build_ig_node,
+        report_paragraph=(
+            "Mask type: node-feature mask (`attributes`); no edge mask. "
+            "Method: Integrated Gradients—path-integral attribution by averaging gradients "
+            "along paths from a baseline to the input (cost scales with `n_steps`). "
+            "Implemented here via a Captum-safe bridge over node features."
+        ),
         produces_node_mask=True,
         produces_edge_mask=False,
     ),
     "IGEDGE": ExplainerSpec(
         name="IGEDGE",
         builder=_build_ig_edge,
+        report_paragraph=(
+            "Mask type: edge mask (`object`); no node-feature mask. "
+            "Method: Integrated Gradients on the learnable edge-mask channel—same "
+            "path-integral idea as IG on features, but attributions are per edge and "
+            "runtime scales with the number of integration steps."
+        ),
         produces_node_mask=False,
         produces_edge_mask=True,
     ),
     "GNNEXPL": ExplainerSpec(
         name="GNNEXPL",
         builder=_build_gnn_explainer,
+        report_paragraph=(
+            "Mask type: edge mask only in this configuration (`edge_mask_type=object`); "
+            "no node mask. Method: PyG GNNExplainer—per-instance optimization of a soft "
+            "edge mask with sparsity and entropy regularization over many epochs. "
+            "Explanation is a local optimization problem, not a single-pass gradient map."
+        ),
         produces_node_mask=False,
         produces_edge_mask=True,
     ),
     "PGEXPL": ExplainerSpec(
         name="PGEXPL",
         builder=_build_pg_explainer,
+        report_paragraph=(
+            "Mask type: edge mask (`object`); phenomenon explanations only—no node-feature "
+            "mask. Method: PGExplainer trains a small MLP to predict edge masks; "
+            "`algorithm.train(...)` must complete before calling the explainer. "
+            "Amortized, parametric edge explanations rather than per-instance mask optimization."
+        ),
         needs_training=True,
         phenomenon_only=True,
         produces_node_mask=False,
@@ -304,6 +346,12 @@ _EXPLAINER_SPECS: Dict[str, ExplainerSpec] = {
     "PGMEXPL": ExplainerSpec(
         name="PGMEXPL",
         builder=_build_pgm_explainer,
+        report_paragraph=(
+            "Mask type: node-feature mask (`attributes`); no edge mask (PGMExplainer does "
+            "not support edge masks). Method: perturbation plus statistical testing—sample "
+            "forward passes under feature perturbations and use chi-square conditional "
+            "independence (pgmpy) to mark significant nodes; classification-oriented."
+        ),
         produces_node_mask=True,
         produces_edge_mask=False,
     ),
@@ -331,3 +379,11 @@ def validate_explainer(name: str) -> str:
             f"Unknown explainer: {name}. Available: {AVAILABLE_EXPLAINERS}"
         )
     return name
+
+
+def explainer_report_meta() -> Dict[str, Dict[str, str]]:
+    """Mask-type + method blurbs for web reports (e.g. ``report_data.json``)."""
+    return {
+        name: {"report_paragraph": _EXPLAINER_SPECS[name].report_paragraph}
+        for name in AVAILABLE_EXPLAINERS
+    }

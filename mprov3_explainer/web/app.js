@@ -212,6 +212,21 @@
     return Number(x).toFixed(4);
   }
 
+  /**
+   * HTML paragraph with mask + method blurb for an explainer (from report_data.json).
+   * @param {string} explainerId
+   */
+  function explainerParagraph(explainerId) {
+    const info =
+      data &&
+      data.meta &&
+      data.meta.explainer_info &&
+      data.meta.explainer_info[explainerId];
+    const text = info && info.report_paragraph;
+    if (!text) return "";
+    return `<p class="explainer-blurb">${esc(text)}</p>`;
+  }
+
   /** Fold index: links to explainer slices + summary table */
   function viewFold(foldId) {
     const fb = foldBlock(foldId);
@@ -234,6 +249,7 @@
   /** Explainer index: links to each fold + summary by fold */
   function viewExplainer(explainerId) {
     let h = `<div class="card"><h2>Explainer ${esc(explainerId)}</h2>`;
+    h += explainerParagraph(explainerId);
     h += "<h3 class='section-title'>Results per fold</h3><ul>";
     for (const fid of data.meta.fold_indices || []) {
       const fb = foldBlock(fid);
@@ -258,6 +274,7 @@
     const graphs = fb.explainers[explainerId].graphs || {};
     const ids = Object.keys(graphs).sort();
     let h = `<div class="card"><h2>Fold ${esc(foldId)} — ${esc(explainerId)}</h2>`;
+    h += explainerParagraph(explainerId);
     h += '<div class="grid">';
     for (const gid of ids) {
       const g = graphs[gid];
@@ -306,6 +323,7 @@
       const g = block && block.graphs && block.graphs[graphId];
       if (!g) continue;
       h += `<div class="graph-detail-explainer"><h4>${esc(ex)}</h4>`;
+      h += explainerParagraph(ex);
       h += `<p><img src="${esc(g.mask_image)}" alt="mask ${esc(ex)}" style="max-width:360px;height:auto;border:1px solid #ccc;border-radius:6px" /></p>`;
       h += "<p><strong>Per-graph metrics</strong>: fid+ " + esc(fmt(g.fidelity_plus)) + ", fid− " + esc(fmt(g.fidelity_minus)) + ", Ff1 " + esc(fmt(g.paper_f1_fidelity)) + "</p>";
       h += "<p><strong>Explanation raw values</strong> (edge_index / masks):</p>";

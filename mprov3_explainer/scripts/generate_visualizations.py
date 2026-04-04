@@ -52,7 +52,12 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_VISUALIZATIONS,
 )
 
-from mprov3_explainer import AVAILABLE_EXPLAINERS, validate_explainer, visualizations_run_dir
+from mprov3_explainer import (
+    AVAILABLE_EXPLAINERS,
+    explainer_report_meta,
+    validate_explainer,
+    visualizations_run_dir,
+)
 from mprov3_explainer.visualize import (
     draw_molecule_base,
     draw_molecule_with_mask,
@@ -457,6 +462,7 @@ def main() -> None:
             "num_folds": num_folds_hint or (max_fold_index + 1),
             "fold_indices": [str(fi) for fi, _, _ in fold_entries],
             "explainers": explainer_names,
+            "explainer_info": explainer_report_meta(),
             "gnn": {
                 "type": "MProGNN (GINE)",
                 "pool": DEFAULT_POOL,

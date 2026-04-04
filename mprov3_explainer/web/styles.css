@@ -50,6 +50,14 @@ body {
   font-size: 14px;
 }
 
+.explainer-blurb {
+  margin: 0.5rem 0 1rem;
+  max-width: 52rem;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
 .main-nav {
   padding: 0.75rem 1.5rem;
   background: #eaeef2;
