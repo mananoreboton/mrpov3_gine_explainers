@@ -134,6 +134,10 @@ def main() -> None:
         log_overwrite_dir_if_nonempty(out_dir, log.log)
         log.log(f"Dataset: {dataset_dir}")
         log.log(f"Output: {out_dir}")
+        log.log(
+            f"CV fold: {split_config.fold_index + 1}/{split_config.num_folds} "
+            f"(fold_index={split_config.fold_index}, num_folds={split_config.num_folds})"
+        )
         train_loader, val_loader, _ = create_data_loaders(
             dataset_base, data_root, split_config, batch_size=args.batch_size
         )
@@ -154,7 +158,7 @@ def main() -> None:
 
         best_val_acc = 0.0
         for epoch in range(1, args.epochs + 1):
-            train_loss = train_one_epoch(
+            train_loss, train_acc = train_one_epoch(
                 model,
                 train_loader,
                 optimizer,
@@ -167,9 +171,15 @@ def main() -> None:
                 torch.save(model.state_dict(), out_dir / DEFAULT_TRAINING_CHECKPOINT_FILENAME)
             if epoch % 10 == 0 or epoch == 1:
                 log.log(
-                    f"Epoch {epoch:3d}  train_loss={train_loss:.4f}  val_acc={val_metrics.accuracy:.4f}"
+                    f"Epoch {epoch:3d}  fold_index={split_config.fold_index}  "
+                    f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+                    f"val_acc={val_metrics.accuracy:.4f}"
                 )
-        log.log(f"Best checkpoint saved to {out_dir / DEFAULT_TRAINING_CHECKPOINT_FILENAME}")
+        log.log(
+            f"Best validation score (accuracy): {best_val_acc:.4f}  "
+            f"fold_index={split_config.fold_index}  "
+            f"checkpoint={out_dir / DEFAULT_TRAINING_CHECKPOINT_FILENAME}"
+        )
         log.log(f"Log written to {log_path}")
 
 

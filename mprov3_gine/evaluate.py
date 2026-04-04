@@ -148,49 +148,59 @@ def main() -> None:
         fold_index=args.fold_index,
         dataset_name=dataset_name,
     )
-    _, _, test_loader = create_data_loaders(
-        dataset_base, data_root, split_config, batch_size=args.batch_size
-    )
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MProGNN(
-        in_channels=DEFAULT_IN_CHANNELS,
-        hidden_channels=args.hidden,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-        out_classes=args.num_classes,
-        pool=DEFAULT_POOL,
-        edge_dim=DEFAULT_EDGE_DIM,
-    ).to(device)
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=False))
-
-    test_metrics, results = evaluate_test_with_predictions(model, test_loader, device)
-
     fold_dir = f"fold_{split_config.fold_index}"
     out_dir = results_root / RESULTS_CLASSIFICATIONS / fold_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "evaluate.log"
     results_path = out_dir / "evaluation_results.json"
 
-    payload = {
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "data_root": str(data_root.resolve()),
-        "results_root": str(results_root.resolve()),
-        "dataset_name": dataset_name,
-        "fold_index": split_config.fold_index,
-        "num_folds": split_config.num_folds,
-        "accuracy": test_metrics.accuracy,
-        "results": [
-            {"pdb_id": pdb_id, "real_category": real, "predicted_category": pred}
-            for pdb_id, real, pred in results
-        ],
-    }
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     with RunLogger(log_path) as log:
-        log_overwrite_if_exists(results_path, log.log)
+        log.log(
+            f"CV fold: {split_config.fold_index + 1}/{split_config.num_folds} "
+            f"(fold_index={split_config.fold_index}, num_folds={split_config.num_folds})"
+        )
+        log.log(f"Output: {out_dir}")
         log.log(f"Checkpoint: {checkpoint_path}")
         log.log(f"Dataset: {dataset_dir}")
+
+        _, _, test_loader = create_data_loaders(
+            dataset_base, data_root, split_config, batch_size=args.batch_size
+        )
         log.log(f"Test set size: {len(test_loader.dataset)}")
-        log.log(f"Test accuracy (Category): {test_metrics.accuracy:.4f}")
+
+        model = MProGNN(
+            in_channels=DEFAULT_IN_CHANNELS,
+            hidden_channels=args.hidden,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+            out_classes=args.num_classes,
+            pool=DEFAULT_POOL,
+            edge_dim=DEFAULT_EDGE_DIM,
+        ).to(device)
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=False))
+
+        log.log(f"Running test evaluation (fold_index={split_config.fold_index})")
+        test_metrics, results = evaluate_test_with_predictions(model, test_loader, device)
+
+        payload = {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "data_root": str(data_root.resolve()),
+            "results_root": str(results_root.resolve()),
+            "dataset_name": dataset_name,
+            "fold_index": split_config.fold_index,
+            "num_folds": split_config.num_folds,
+            "accuracy": test_metrics.accuracy,
+            "results": [
+                {"pdb_id": pdb_id, "real_category": real, "predicted_category": pred}
+                for pdb_id, real, pred in results
+            ],
+        }
+        log_overwrite_if_exists(results_path, log.log)
+        log.log(
+            f"Test accuracy (Category): {test_metrics.accuracy:.4f} "
+            f"(fold_index={split_config.fold_index})"
+        )
         print_test_report(test_metrics)
         results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         log.log(f"Results saved to {results_path}")

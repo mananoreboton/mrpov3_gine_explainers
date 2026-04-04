@@ -1,5 +1,5 @@
 """
-Visualize a subset of ligand graphs from a built PyG dataset (data.pt).
+Visualize ligand graphs from a built PyG dataset (data.pt); by default all graphs.
 
 Uses RDKit's 2D drawer (MolDraw2D) for publication-quality graphics. For each
 selected graph this script:
@@ -340,7 +340,7 @@ def write_index_html(
 def _select_indices_from_args(
     ds: MProV3Dataset,
     pdb_order: Optional[Sequence[str]],
-    num_graphs: int,
+    num_graphs: Optional[int],
     indices: Optional[Sequence[int]],
     pdb_ids: Optional[Sequence[str]],
 ) -> List[int]:
@@ -362,7 +362,9 @@ def _select_indices_from_args(
                 result.append(mapping[p])
         return result
 
-    # Default: first num_graphs graphs.
+    # Default: all graphs; --num_graphs caps how many (from the start) are drawn.
+    if num_graphs is None:
+        return list(range(n))
     return list(range(min(num_graphs, n)))
 
 
@@ -382,8 +384,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num_graphs",
         type=int,
-        default=16,
-        help="Number of graphs to visualize if --indices/--pdb_ids are not provided (default: 16).",
+        default=None,
+        metavar="N",
+        help=(
+            "When --indices/--pdb_ids are not used, draw at most the first N graphs "
+            "(default: all graphs in the dataset)."
+        ),
     )
     parser.add_argument(
         "--indices",
