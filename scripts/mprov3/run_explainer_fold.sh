@@ -34,7 +34,7 @@ if [[ -n "$train_ts" ]]; then
 fi
 
 echo "==> run_explanations.py"
-mprov3_run_explanations_capture_ts "${EXPLAIN_CLI_ARGS[@]}" "${MEX_MISCLASS_ARGS[@]}" "${args[@]}"
+mprov3_run_explanations_capture_ts "${EXPLAIN_CLI_ARGS[@]}" ${MEX_MISCLASS_ARGS[@]+"${MEX_MISCLASS_ARGS[@]}"} "${args[@]}"
 
 echo "==> generate_visualizations.py --timestamp $EXPL_TS"
 run_mex_py scripts/generate_visualizations.py --timestamp "$EXPL_TS" "${EXPLAIN_CLI_ARGS[@]}"

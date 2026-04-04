@@ -56,7 +56,7 @@ mprov3_misclassified_arg
 echo "==> run_explanations.py --max_graphs 1 (smoke)"
 mprov3_run_explanations_capture_ts \
   "${EXPLAIN_CLI_ARGS[@]}" \
-  "${MEX_MISCLASS_ARGS[@]}" \
+  ${MEX_MISCLASS_ARGS[@]+"${MEX_MISCLASS_ARGS[@]}"} \
   --results_root "$GNN_DIR/results" \
   --num_folds "$nf" \
   --fold_index "$fold" \

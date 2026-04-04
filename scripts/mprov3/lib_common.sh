@@ -92,7 +92,9 @@ mprov3_build_explain_cli() {
 }
 
 # Caller must run MEX_MISCLASS_ARGS=() immediately before (global array; same nounset/scoping
-# pattern as MPROV3_ARGS).
+# pattern as MPROV3_ARGS). When passing to a command under set -u, do not use
+# "${MEX_MISCLASS_ARGS[@]}" directly if the array may be empty — use
+# ${MEX_MISCLASS_ARGS[@]+"${MEX_MISCLASS_ARGS[@]}"} (see smoke / run_explainer_fold).
 mprov3_misclassified_arg() {
   if [[ "${INCLUDE_MISCLASSIFIED:-0}" == "1" ]]; then
     MEX_MISCLASS_ARGS+=(--no_correct_class_only)
