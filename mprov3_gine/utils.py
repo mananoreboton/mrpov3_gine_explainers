@@ -61,6 +61,9 @@ class RunLogger:
     """
     Context manager that writes each log message to both stdout and a log file.
     Use for capturing the main terminal output of a script into a file.
+
+    Use ``log_file_only`` for lines that should appear in the file but not on stdout
+    (for example verbose per-graph lines when running with ``--quiet``).
     """
 
     def __init__(self, log_path: Path):
@@ -70,6 +73,11 @@ class RunLogger:
 
     def log(self, msg: str = "") -> None:
         print(msg)
+        self._file.write(msg + "\n")
+        self._file.flush()
+
+    def log_file_only(self, msg: str = "") -> None:
+        """Append to the log file without printing to stdout."""
         self._file.write(msg + "\n")
         self._file.flush()
 

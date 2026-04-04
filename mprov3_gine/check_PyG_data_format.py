@@ -13,9 +13,13 @@ Checks performed:
   - edge_attr: float32, shape (E, 1)
   - pIC50: float32 tensor with a single value
   - category: long tensor with a single class index in [0, num_classes-1]
-  - pdb_id attribute is present (printed for each graph checked)
-- pdb_order.txt exists and matches dataset length
+  - pdb_id attribute is present (each graph is checked; OK lines default to the log file only)
+- pdb_order.txt exists and matches dataset length; ``pdb_id`` on each checked graph
+  matches the corresponding line (case-insensitive)
 - Train/val/test indices derived from the split files are within dataset bounds
+
+Use ``--verbose`` to print every per-graph OK line on stdout. Use ``--quiet`` to
+keep fold split membership listing in the log file only.
 
 Exit code:
 - 0 if all checks pass
@@ -28,7 +32,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 
@@ -44,7 +48,6 @@ from mprov3_gine_explainer_defaults import (
     PYG_PDB_ORDER_FILENAME,
     RESULTS_CHECK_FORMAT,
     RESULTS_DATASETS,
-    SplitConfig,
     resolve_fold_indices,
 )
 from dataset import (
@@ -53,6 +56,9 @@ from dataset import (
     load_dataset_pdb_order,
 )
 from utils import RunLogger
+
+# Max PDB IDs (or indices) listed per split line under each fold section; remainder summarized.
+_FOLD_SPLIT_MEMBER_PREVIEW_MAX = 80
 
 EXPECTED_PYG_GRAPH_SCHEMA = """Expected PyG Data attributes (per graph):
   x          torch.float32   shape (N, 4)     columns: x, y, z, atomic_number
@@ -135,17 +141,23 @@ def _check_sample_graphs(
     dataset: MProV3Dataset,
     num_classes: int,
     max_samples: int | None = None,
-) -> Tuple[List[CheckResult], List[str]]:
+) -> Tuple[List[CheckResult], List[str], List[CheckResult]]:
     """
     Validate graphs. If max_samples is None, checks every graph; otherwise at most that many.
 
-    Returns (check_results, per_graph_status_lines) where each status line includes the PDB id.
+    Returns (detail_results, per_graph_status_lines, summary_results).
+    ``detail_results`` are per-attribute failures (log to file only in main to avoid
+    duplicating the one-line status). ``summary_results`` is one pass/fail rollup.
     """
-    results: List[CheckResult] = []
+    detail_results: List[CheckResult] = []
     status_lines: List[str] = []
     if len(dataset) == 0:
-        # Already reported as error in _load_dataset.
-        return results, status_lines
+        return [], [], [
+            CheckResult(
+                False,
+                "Graph validation skipped: dataset has no graphs (length 0).",
+            )
+        ]
 
     n_total = len(dataset)
     n_samples = n_total if max_samples is None else min(n_total, max_samples)
@@ -153,7 +165,7 @@ def _check_sample_graphs(
         try:
             g = dataset[idx]
         except Exception as exc:
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx}: failed to load from dataset: {exc}",
@@ -164,11 +176,11 @@ def _check_sample_graphs(
 
         pdb_display = getattr(g, "pdb_id", None)
         pdb_str = str(pdb_display) if pdb_display is not None else "<missing pdb_id>"
-        _results_offset = len(results)
+        _detail_offset = len(detail_results)
 
         # x: (N, 4) float32
         if not hasattr(g, "x"):
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx} (pdb={pdb_str}) is missing attribute 'x'.",
@@ -176,7 +188,7 @@ def _check_sample_graphs(
             )
         else:
             if g.x.dtype != torch.float32:
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'x' has dtype {g.x.dtype}, "
@@ -184,7 +196,7 @@ def _check_sample_graphs(
                     )
                 )
             if g.x.dim() != 2 or g.x.size(1) != 4:
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'x' has shape {tuple(g.x.shape)}, "
@@ -194,7 +206,7 @@ def _check_sample_graphs(
 
         # edge_index: (2, E) long
         if not hasattr(g, "edge_index"):
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx} (pdb={pdb_str}) is missing attribute 'edge_index'.",
@@ -202,7 +214,7 @@ def _check_sample_graphs(
             )
         else:
             if g.edge_index.dtype != torch.long:
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'edge_index' has dtype "
@@ -210,7 +222,7 @@ def _check_sample_graphs(
                     )
                 )
             if g.edge_index.dim() != 2 or g.edge_index.size(0) != 2:
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'edge_index' has shape "
@@ -220,7 +232,7 @@ def _check_sample_graphs(
 
         # edge_attr: (E, 1) float32
         if not hasattr(g, "edge_attr"):
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx} (pdb={pdb_str}) is missing attribute 'edge_attr'.",
@@ -228,7 +240,7 @@ def _check_sample_graphs(
             )
         else:
             if g.edge_attr.dtype != torch.float32:
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'edge_attr' has dtype "
@@ -236,7 +248,7 @@ def _check_sample_graphs(
                     )
                 )
             if g.edge_attr.dim() != 2 or g.edge_attr.size(1) != 1:
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'edge_attr' has shape "
@@ -249,7 +261,7 @@ def _check_sample_graphs(
                 e_index_e = int(g.edge_index.size(1))
                 e_attr_e = int(g.edge_attr.size(0))
                 if e_index_e != e_attr_e:
-                    results.append(
+                    detail_results.append(
                         CheckResult(
                             False,
                             f"Graph {idx} (pdb={pdb_str}) has {e_index_e} edges in "
@@ -259,7 +271,7 @@ def _check_sample_graphs(
 
         # pIC50: regression label (1,)
         if not hasattr(g, "pIC50"):
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx} (pdb={pdb_str}) is missing 'pIC50' label.",
@@ -267,7 +279,7 @@ def _check_sample_graphs(
             )
         else:
             if not isinstance(g.pIC50, torch.Tensor):
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'pIC50' is not a tensor "
@@ -276,7 +288,7 @@ def _check_sample_graphs(
                 )
             else:
                 if g.pIC50.dtype != torch.float32:
-                    results.append(
+                    detail_results.append(
                         CheckResult(
                             False,
                             f"Graph {idx} (pdb={pdb_str}) 'pIC50' has dtype "
@@ -284,7 +296,7 @@ def _check_sample_graphs(
                         )
                     )
                 if g.pIC50.numel() != 1:
-                    results.append(
+                    detail_results.append(
                         CheckResult(
                             False,
                             f"Graph {idx} (pdb={pdb_str}) 'pIC50' has shape "
@@ -294,7 +306,7 @@ def _check_sample_graphs(
 
         # category: classification label (1,) in [0, num_classes-1]
         if not hasattr(g, "category"):
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx} (pdb={pdb_str}) is missing 'category' label.",
@@ -302,7 +314,7 @@ def _check_sample_graphs(
             )
         else:
             if not isinstance(g.category, torch.Tensor):
-                results.append(
+                detail_results.append(
                     CheckResult(
                         False,
                         f"Graph {idx} (pdb={pdb_str}) 'category' is not a tensor "
@@ -311,7 +323,7 @@ def _check_sample_graphs(
                 )
             else:
                 if g.category.dtype != torch.long:
-                    results.append(
+                    detail_results.append(
                         CheckResult(
                             False,
                             f"Graph {idx} (pdb={pdb_str}) 'category' has dtype "
@@ -319,7 +331,7 @@ def _check_sample_graphs(
                         )
                     )
                 if g.category.numel() != 1:
-                    results.append(
+                    detail_results.append(
                         CheckResult(
                             False,
                             f"Graph {idx} (pdb={pdb_str}) 'category' has shape "
@@ -329,7 +341,7 @@ def _check_sample_graphs(
                 else:
                     val = int(g.category.item())
                     if not (0 <= val < num_classes):
-                        results.append(
+                        detail_results.append(
                             CheckResult(
                                 False,
                                 f"Graph {idx} (pdb={pdb_str}) 'category' value {val} "
@@ -339,7 +351,7 @@ def _check_sample_graphs(
 
         # pdb_id: for split mapping and traceability
         if not hasattr(g, "pdb_id"):
-            results.append(
+            detail_results.append(
                 CheckResult(
                     False,
                     f"Graph {idx} (pdb={pdb_str}) is missing attribute 'pdb_id' "
@@ -347,7 +359,7 @@ def _check_sample_graphs(
                 )
             )
 
-        chunk = results[_results_offset:]
+        chunk = detail_results[_detail_offset:]
         graph_failed = any(not r.ok for r in chunk)
         if graph_failed:
             brief = "; ".join(r.message for r in chunk if not r.ok)
@@ -355,8 +367,9 @@ def _check_sample_graphs(
         else:
             status_lines.append(f"Graph {idx} (pdb={pdb_str}): OK")
 
-    if not any(not r.ok for r in results):
-        results.append(
+    summary_results: List[CheckResult] = []
+    if not any(not r.ok for r in detail_results):
+        summary_results.append(
             CheckResult(
                 True,
                 f"All checked graphs (n={n_samples}) have the expected attributes "
@@ -364,23 +377,100 @@ def _check_sample_graphs(
             )
         )
     else:
-        results.append(
+        n_failed_graphs = sum(1 for line in status_lines if ": FAIL" in line)
+        summary_results.append(
             CheckResult(
                 False,
-                f"One or more of {n_samples} checked graphs failed attribute/shape validation.",
+                f"{n_failed_graphs} of {n_samples} checked graphs failed attribute/shape validation "
+                "(see per-graph lines and log file for details).",
             )
         )
 
-    return results, status_lines
+    return detail_results, status_lines, summary_results
+
+
+def _normalize_pdb_token(value: object) -> str:
+    return str(value).strip().upper()
+
+
+def _split_member_preview_lines(
+    name: str,
+    idx: torch.Tensor,
+    pdb_order: Optional[List[str]],
+    dataset_len: int,
+    max_show: int = _FOLD_SPLIT_MEMBER_PREVIEW_MAX,
+) -> List[str]:
+    """
+    Lines listing graphs in one split (train/val/test) for a fold.
+
+    Uses PDB IDs from ``pdb_order`` when in range; otherwise dataset indices.
+    Sorted by index; truncated with a remainder count.
+    """
+    if idx.numel() == 0:
+        return [f"  {name}: (empty — no dataset indices in this split)"]
+
+    raw = sorted({int(x.item()) for x in idx.view(-1)})
+    labels: List[str] = []
+    for i in raw:
+        if pdb_order is not None and 0 <= i < len(pdb_order) and i < dataset_len:
+            labels.append(str(pdb_order[i]))
+        else:
+            labels.append(str(i))
+
+    n = len(labels)
+    if n <= max_show:
+        body = ", ".join(labels)
+    else:
+        body = ", ".join(labels[:max_show]) + f" … (+{n - max_show} more)"
+    return [f"  {name} (n={n}): {body}"]
+
+
+def _check_pdb_id_alignment(
+    dataset: MProV3Dataset,
+    pdb_order: List[str],
+    n_samples: int,
+) -> List[CheckResult]:
+    """Ensure ``data[i].pdb_id`` matches ``pdb_order[i]`` for checked indices (case-insensitive)."""
+    results: List[CheckResult] = []
+    for i in range(n_samples):
+        g = dataset[i]
+        expected = _normalize_pdb_token(pdb_order[i])
+        got = _normalize_pdb_token(getattr(g, "pdb_id", ""))
+        if got != expected:
+            results.append(
+                CheckResult(
+                    False,
+                    f"Graph {i}: pdb_id mismatch — data has {got!r}, "
+                    f"{PYG_PDB_ORDER_FILENAME} line {i + 1} has {expected!r}.",
+                )
+            )
+    if results:
+        return results
+    return [
+        CheckResult(
+            True,
+            f"pdb_id matches {PYG_PDB_ORDER_FILENAME} for all {n_samples} checked graphs.",
+        )
+    ]
 
 
 def _check_pdb_order_file(
     data_root: Path,
     dataset_name: str,
     dataset_len: int,
-) -> List[CheckResult]:
+    pdb_order_cached: Optional[List[str]] = None,
+) -> Tuple[List[CheckResult], Optional[List[str]]]:
+    """
+    Validate ``pdb_order.txt``. If ``pdb_order_cached`` is set, use it instead of reading disk again.
+    Returns ``(check_results, pdb_order_or_none)``; the list is only returned when present and
+    its length matches ``dataset_len``.
+    """
     results: List[CheckResult] = []
-    pdb_order = load_dataset_pdb_order(data_root, dataset_name)
+    pdb_order = (
+        pdb_order_cached
+        if pdb_order_cached is not None
+        else load_dataset_pdb_order(data_root, dataset_name)
+    )
     if pdb_order is None:
         results.append(
             CheckResult(
@@ -389,7 +479,7 @@ def _check_pdb_order_file(
                 "map split PDB IDs to dataset indices (it is written by build_dataset.py).",
             )
         )
-        return results
+        return results, None
 
     if len(pdb_order) != dataset_len:
         results.append(
@@ -399,14 +489,15 @@ def _check_pdb_order_file(
                 f"{dataset_len} graphs; they must match.",
             )
         )
-    else:
-        results.append(
-            CheckResult(
-                True,
-                f"{PYG_PDB_ORDER_FILENAME} exists and its length matches the dataset size.",
-            )
+        return results, None
+
+    results.append(
+        CheckResult(
+            True,
+            f"{PYG_PDB_ORDER_FILENAME} exists and its length matches the dataset size.",
         )
-    return results
+    )
+    return results, pdb_order
 
 
 def _check_split_indices_in_range(
@@ -419,9 +510,14 @@ def _check_split_indices_in_range(
     test_split_file: str,
     num_folds: int,
     fold_index: int,
-) -> List[CheckResult]:
+    dataset_pdb_order: Optional[List[str]] = None,
+) -> Tuple[List[CheckResult], List[str]]:
     results: List[CheckResult] = []
-    pdb_order = load_dataset_pdb_order(dataset_root, dataset_name)
+    pdb_order = (
+        dataset_pdb_order
+        if dataset_pdb_order is not None
+        else load_dataset_pdb_order(dataset_root, dataset_name)
+    )
 
     try:
         train_idx, val_idx, test_idx = get_train_val_test_indices(
@@ -441,11 +537,20 @@ def _check_split_indices_in_range(
                 f"dataset or splits may be incompatible. Error: {exc}",
             )
         )
-        return results
+        return results, []
+
+    preview_lines: List[str] = [
+        "  Split membership (dataset index order, PDB id when known):",
+        *_split_member_preview_lines("train", train_idx, pdb_order, dataset_len),
+        *_split_member_preview_lines("val", val_idx, pdb_order, dataset_len),
+        *_split_member_preview_lines("test", test_idx, pdb_order, dataset_len),
+    ]
+
+    failures: List[CheckResult] = []
 
     def _check_subset(name: str, idx: torch.Tensor) -> None:
         if idx.numel() == 0:
-            results.append(
+            failures.append(
                 CheckResult(
                     False,
                     f"{name} indices tensor is empty; check that splits reference "
@@ -456,19 +561,11 @@ def _check_split_indices_in_range(
         min_idx = int(idx.min().item())
         max_idx = int(idx.max().item())
         if min_idx < 0 or max_idx >= dataset_len:
-            results.append(
+            failures.append(
                 CheckResult(
                     False,
                     f"{name} indices out of range [0, {dataset_len - 1}]: "
                     f"min={min_idx}, max={max_idx}.",
-                )
-            )
-        else:
-            results.append(
-                CheckResult(
-                    True,
-                    f"{name} indices are within dataset bounds "
-                    f"[0, {dataset_len - 1}] (n={idx.numel()}).",
                 )
             )
 
@@ -476,7 +573,18 @@ def _check_split_indices_in_range(
     _check_subset("val", val_idx)
     _check_subset("test", test_idx)
 
-    return results
+    if failures:
+        results.extend(failures)
+    else:
+        results.append(
+            CheckResult(
+                True,
+                f"split indices in range (train={int(train_idx.numel())}, "
+                f"val={int(val_idx.numel())}, test={int(test_idx.numel())}).",
+            )
+        )
+
+    return results, preview_lines
 
 
 def run_graph_level_checks(
@@ -484,44 +592,79 @@ def run_graph_level_checks(
     dataset_name: str,
     num_classes: int,
     max_samples: int | None,
-) -> Tuple[bool, List[CheckResult], List[str], int | None]:
+) -> Tuple[
+    bool,
+    List[CheckResult],
+    List[CheckResult],
+    List[str],
+    List[CheckResult],
+    List[CheckResult],
+    List[CheckResult],
+    int | None,
+    Optional[List[str]],
+]:
     """
-    File presence, load dataset, validate graphs (see max_samples), pdb_order.txt.
-    Per-graph status lines include each PDB id checked.
+    File presence, load dataset, validate graphs, ``pdb_order.txt``, pdb_id alignment.
 
-    The last return value is ``len(dataset)`` when the dataset was loaded, else ``None``
-    (used for fold split bounds checks).
+    Returns:
+        all_ok,
+        prefix_results (file exists + dataset load messages),
+        graph_detail (per-attribute; log to file only in main),
+        graph_status_lines,
+        graph_summary (single rollup),
+        pdb_order_results,
+        pdb_alignment_results,
+        dataset_len or None,
+        pdb_order list or None (for fold checks; only when length matches dataset).
     """
-    all_results: List[CheckResult] = []
-    status_lines: List[str] = []
+    prefix_results: List[CheckResult] = []
+    prefix_results.extend(_check_dataset_file_exists(dataset_root, dataset_name))
 
-    all_results.extend(_check_dataset_file_exists(dataset_root, dataset_name))
-
-    if any(not r.ok for r in all_results):
-        return False, all_results, status_lines, None
+    if any(not r.ok for r in prefix_results):
+        return False, prefix_results, [], [], [], [], [], None, None
 
     load_results, dataset = _load_dataset(dataset_root, dataset_name)
-    all_results.extend(load_results)
+    prefix_results.extend(load_results)
 
     if dataset is None:
-        return False, all_results, status_lines, None
+        return False, prefix_results, [], [], [], [], [], None, None
 
-    graph_results, status_lines = _check_sample_graphs(
+    dataset_len = len(dataset)
+    graph_detail, graph_status_lines, graph_summary = _check_sample_graphs(
         dataset=dataset,
         num_classes=num_classes,
         max_samples=max_samples,
     )
-    all_results.extend(graph_results)
-    all_results.extend(
-        _check_pdb_order_file(
-            data_root=dataset_root,
-            dataset_name=dataset_name,
-            dataset_len=len(dataset),
-        )
+    n_samples = len(graph_status_lines)
+
+    pdb_order_results, pdb_order = _check_pdb_order_file(
+        data_root=dataset_root,
+        dataset_name=dataset_name,
+        dataset_len=dataset_len,
     )
 
-    all_ok = all(r.ok for r in all_results)
-    return all_ok, all_results, status_lines, len(dataset)
+    pdb_alignment_results: List[CheckResult] = []
+    if pdb_order is not None and n_samples > 0:
+        pdb_alignment_results = _check_pdb_id_alignment(dataset, pdb_order, n_samples)
+
+    all_ok = (
+        all(r.ok for r in prefix_results)
+        and all(r.ok for r in graph_detail)
+        and all(r.ok for r in graph_summary)
+        and all(r.ok for r in pdb_order_results)
+        and all(r.ok for r in pdb_alignment_results)
+    )
+    return (
+        all_ok,
+        prefix_results,
+        graph_detail,
+        graph_status_lines,
+        graph_summary,
+        pdb_order_results,
+        pdb_alignment_results,
+        dataset_len,
+        pdb_order,
+    )
 
 
 def run_fold_split_checks(
@@ -534,9 +677,10 @@ def run_fold_split_checks(
     num_folds: int,
     fold_index: int,
     dataset_len: int,
-) -> Tuple[bool, List[CheckResult]]:
-    """Train/val/test index range check for one fold."""
-    results = _check_split_indices_in_range(
+    dataset_pdb_order: Optional[List[str]],
+) -> Tuple[bool, List[CheckResult], List[str]]:
+    """Train/val/test index range check for one fold; third value is split membership preview lines."""
+    results, preview_lines = _check_split_indices_in_range(
         dataset_root=dataset_root,
         splits_root=splits_root,
         dataset_name=dataset_name,
@@ -546,8 +690,9 @@ def run_fold_split_checks(
         test_split_file=test_split_file,
         num_folds=num_folds,
         fold_index=fold_index,
+        dataset_pdb_order=dataset_pdb_order,
     )
-    return all(r.ok for r in results), results
+    return all(r.ok for r in results), results, preview_lines
 
 
 def _parse_args() -> argparse.Namespace:
@@ -578,19 +723,28 @@ def _parse_args() -> argparse.Namespace:
         "--train_split_file",
         type=str,
         default=DEFAULT_TRAIN_SPLIT_FILE,
-        help=f"Train split file name under data_root/Splits (default: {DEFAULT_TRAIN_SPLIT_FILE})",
+        help=(
+            f"Train split file name under splits_root/Splits/ "
+            f"(default: {DEFAULT_TRAIN_SPLIT_FILE})"
+        ),
     )
     parser.add_argument(
         "--val_split_file",
         type=str,
         default=DEFAULT_VAL_SPLIT_FILE,
-        help=f"Validation split file name under data_root/Splits (default: {DEFAULT_VAL_SPLIT_FILE})",
+        help=(
+            f"Validation split file name under splits_root/Splits "
+            f"(default: {DEFAULT_VAL_SPLIT_FILE})"
+        ),
     )
     parser.add_argument(
         "--test_split_file",
         type=str,
         default=DEFAULT_TEST_SPLIT_FILE,
-        help=f"Test split file name under data_root/Splits (default: {DEFAULT_TEST_SPLIT_FILE})",
+        help=(
+            f"Test split file name under splits_root/Splits "
+            f"(default: {DEFAULT_TEST_SPLIT_FILE})"
+        ),
     )
     parser.add_argument(
         "--num_folds",
@@ -627,6 +781,22 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Check at most N graphs (in dataset index order). "
             "Default: check every graph."
+        ),
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Print each per-graph result line on stdout (default: OK lines are only "
+            "in the log file; failures always print here)."
+        ),
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help=(
+            "Write fold split membership listing to the log file only (stdout still "
+            "gets the one-line per-graph summary and any failures)."
         ),
     )
     return parser.parse_args()
@@ -676,9 +846,6 @@ def main() -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "check_output.log"
 
-    print(EXPECTED_PYG_GRAPH_SCHEMA)
-    print()
-
     all_ok = True
     with RunLogger(log_path) as log:
         log.log(EXPECTED_PYG_GRAPH_SCHEMA)
@@ -686,27 +853,65 @@ def main() -> None:
         log.log(
             f"Checking PyG output dataset: {dataset_root} / {dataset_name} "
             f"(splits from {splits_root}, folds={fold_list}, num_folds={args.num_folds}, "
-            f"max_samples={args.max_samples})"
+            f"max_samples={args.max_samples}, verbose={args.verbose}, quiet={args.quiet})"
         )
 
-        ok_g, graph_results, per_graph_lines, dataset_len = run_graph_level_checks(
+        (
+            ok_g,
+            prefix_results,
+            graph_detail,
+            per_graph_lines,
+            graph_summary,
+            pdb_order_results,
+            pdb_alignment_results,
+            dataset_len,
+            pdb_order,
+        ) = run_graph_level_checks(
             dataset_root=dataset_root,
             dataset_name=dataset_name,
             num_classes=args.num_classes,
             max_samples=args.max_samples,
         )
         all_ok = all_ok and ok_g
+
+        for r in prefix_results:
+            status = "OK" if r.ok else "ERROR"
+            log.log(f"[{status}] {r.message}")
+
+        for r in graph_detail:
+            status = "OK" if r.ok else "ERROR"
+            log.log_file_only(f"[{status}] [GRAPH_DETAIL] {r.message}")
+
+        n_ok = sum(1 for line in per_graph_lines if line.endswith(": OK"))
+        n_fail = sum(1 for line in per_graph_lines if ": FAIL" in line)
         for line in per_graph_lines:
-            print(line)
-            log.log(line)
-        for r in graph_results:
+            is_fail = ": FAIL" in line
+            if is_fail or args.verbose:
+                log.log(line)
+            else:
+                log.log_file_only(line)
+        if per_graph_lines and not args.verbose:
+            log.log(
+                f"Per-graph summary: {n_ok} OK, {n_fail} failed "
+                f"(each graph line is in the log file)."
+            )
+
+        for r in graph_summary:
+            status = "OK" if r.ok else "ERROR"
+            log.log(f"[{status}] {r.message}")
+
+        for r in pdb_order_results:
+            status = "OK" if r.ok else "ERROR"
+            log.log(f"[{status}] {r.message}")
+
+        for r in pdb_alignment_results:
             status = "OK" if r.ok else "ERROR"
             log.log(f"[{status}] {r.message}")
 
         if dataset_len is not None:
             for k in fold_list:
                 log.log(f"--- fold_index={k} ---")
-                ok_f, fold_results = run_fold_split_checks(
+                ok_f, fold_results, fold_preview_lines = run_fold_split_checks(
                     dataset_root=dataset_root,
                     splits_root=splits_root,
                     dataset_name=dataset_name,
@@ -716,20 +921,28 @@ def main() -> None:
                     num_folds=args.num_folds,
                     fold_index=k,
                     dataset_len=dataset_len,
+                    dataset_pdb_order=pdb_order,
                 )
+                for pl in fold_preview_lines:
+                    if args.quiet:
+                        log.log_file_only(pl)
+                    else:
+                        log.log(pl)
+                if args.quiet and fold_preview_lines:
+                    log.log(
+                        f"  (Fold {k} split membership listing is in the log file when using --quiet.)"
+                    )
                 all_ok = all_ok and ok_f
                 for r in fold_results:
                     status = "OK" if r.ok else "ERROR"
-                    msg = r.message
-                    log.log(f"[{status}] {msg}")
-                    print(f"[{status}] fold={k} {msg}")
+                    log.log(f"[{status}] fold={k} {r.message}")
 
         if all_ok:
             log.log("All output-data-format checks passed.")
         else:
             log.log(
                 "One or more output-data-format checks FAILED. "
-                "See messages above for details."
+                "See messages above and the log file for details."
             )
         log.log(f"Log written to {log_path}")
 
