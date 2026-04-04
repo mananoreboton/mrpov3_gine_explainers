@@ -32,10 +32,11 @@ run_mex_py() {
   (cd "$MEX_DIR" && uv run python "$@")
 }
 
-# Sets INCLUDE_MISCLASSIFIED from -m / --include-misclassified; remaining args in MPROV3_ARGS.
+# Sets INCLUDE_MISCLASSIFIED from -m / --include-misclassified; appends remaining args to MPROV3_ARGS.
+# Caller must run MPROV3_ARGS=() immediately before calling (global array; avoids nounset and bash
+# scoping quirks when MPROV3_ARGS=() would run inside the function).
 mprov3_strip_include_misclassified_flags() {
   INCLUDE_MISCLASSIFIED="${INCLUDE_MISCLASSIFIED:-0}"
-  MPROV3_ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -m | --include-misclassified)
@@ -49,6 +50,11 @@ mprov3_strip_include_misclassified_flags() {
         ;;
     esac
   done
+}
+
+# Apply positional args after strip; safe with set -u and an empty remainder.
+mprov3_set_positional_from_mprov3_args() {
+  set -- ${MPROV3_ARGS[@]+"${MPROV3_ARGS[@]}"}
 }
 
 mprov3_fold_cli() {

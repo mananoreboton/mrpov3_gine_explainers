@@ -14,8 +14,9 @@ MPROV3_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib_common.sh
 source "$MPROV3_SCRIPT_DIR/lib_common.sh"
 
+MPROV3_ARGS=()
 mprov3_strip_include_misclassified_flags "$@"
-set -- "${MPROV3_ARGS[@]}"
+mprov3_set_positional_from_mprov3_args
 
 fold="${1:?Usage: $0 [-m|--include-misclassified] <fold_index> [trainings_timestamp]}"
 train_ts="${2:-}"
