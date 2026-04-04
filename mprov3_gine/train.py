@@ -1,9 +1,13 @@
 """
 Train GNN on MPro Version 3: classification only (Category: low / medium / high potency).
-Requires a pre-built PyG dataset (run build_dataset.py first). Saves best model to results/trainings/.
+Requires a pre-built PyG dataset (run build_dataset.py first). Saves best model per fold to
+results/trainings/fold_<k>/<checkpoint_name>.
+
 Usage:
   uv run python build_dataset.py --data_root /path/to/snapshot
-  uv run python train.py --data_root /path/to/snapshot [--num_folds 5] [--fold_index 0] [--epochs 100]
+  uv run python train.py --data_root /path/to/snapshot [--num_folds 5] [--epochs 100]
+  uv run python train.py ... --fold_index 0
+  uv run python train.py ... --fold_indices 0 2 4
 """
 
 import argparse
@@ -17,7 +21,6 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_DATA_ROOT,
     DEFAULT_DROPOUT,
     DEFAULT_EDGE_DIM,
-    DEFAULT_FOLD_INDEX,
     DEFAULT_HIDDEN_CHANNELS,
     DEFAULT_IN_CHANNELS,
     DEFAULT_NUM_FOLDS,
@@ -36,6 +39,8 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_TRAININGS,
     SplitConfig,
     resolve_dataset_dir,
+    resolve_fold_indices,
+    training_checkpoint_path,
 )
 
 from loaders import create_data_loaders
@@ -83,11 +88,26 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_NUM_FOLDS,
         help=f"Number of folds (default: {DEFAULT_NUM_FOLDS})",
     )
-    parser.add_argument(
+    fold_group = parser.add_mutually_exclusive_group()
+    fold_group.add_argument(
         "--fold_index",
         type=int,
-        default=DEFAULT_FOLD_INDEX,
-        help="Which fold to use (0 .. num_folds-1)",
+        default=None,
+        help="Train a single fold (0 .. num_folds-1). Default: all folds.",
+    )
+    fold_group.add_argument(
+        "--fold_indices",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="K",
+        help="Train these fold indices only. Default: all folds 0..num_folds-1.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+        help=f"Checkpoint filename under each trainings/fold_<k>/ (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
     )
     parser.add_argument("--epochs", type=int, default=DEFAULT_TRAINING_EPOCHS)
     parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
@@ -112,6 +132,12 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
+    fold_list = resolve_fold_indices(
+        args.num_folds,
+        fold_index=args.fold_index,
+        fold_indices=args.fold_indices,
+    )
+
     dataset_dir = resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
     dataset_name = BUILT_DATASET_FOLDER_NAME
@@ -122,64 +148,78 @@ def main() -> None:
 
     torch.manual_seed(args.seed)
 
-    split_config = SplitConfig(
-        train_file=args.train_split_file,
-        val_file=args.val_split_file,
-        test_file=args.test_split_file,
-        num_folds=args.num_folds,
-        fold_index=args.fold_index,
-        dataset_name=dataset_name,
-    )
     with RunLogger(log_path) as log:
         log_overwrite_dir_if_nonempty(out_dir, log.log)
         log.log(f"Dataset: {dataset_dir}")
         log.log(f"Output: {out_dir}")
         log.log(
-            f"CV fold: {split_config.fold_index + 1}/{split_config.num_folds} "
-            f"(fold_index={split_config.fold_index}, num_folds={split_config.num_folds})"
+            f"Folds to train: {fold_list} (num_folds={args.num_folds}, "
+            f"checkpoint name={args.checkpoint})"
         )
-        train_loader, val_loader, _ = create_data_loaders(
-            dataset_base, data_root, split_config, batch_size=args.batch_size
-        )
-        log.log(f"Dataset size (train/val): {len(train_loader.dataset)} train, {len(val_loader.dataset)} val")
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = MProGNN(
-            in_channels=DEFAULT_IN_CHANNELS,
-            hidden_channels=args.hidden,
-            num_layers=args.num_layers,
-            dropout=args.dropout,
-            out_classes=args.num_classes,
-            pool=DEFAULT_POOL,
-            edge_dim=DEFAULT_EDGE_DIM,
-        ).to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-        criterion_ce = nn.CrossEntropyLoss()
 
-        best_val_acc = 0.0
-        for epoch in range(1, args.epochs + 1):
-            train_loss, train_acc = train_one_epoch(
-                model,
-                train_loader,
-                optimizer,
-                device,
-                criterion_ce,
+        for k in fold_list:
+            log.log("")
+            log.log(
+                f"========== CV fold {k + 1}/{args.num_folds} "
+                f"(fold_index={k}) =========="
             )
-            val_metrics = evaluate_validation(model, val_loader, device)
-            if val_metrics.accuracy > best_val_acc:
-                best_val_acc = val_metrics.accuracy
-                torch.save(model.state_dict(), out_dir / DEFAULT_TRAINING_CHECKPOINT_FILENAME)
-            if epoch % 10 == 0 or epoch == 1:
-                log.log(
-                    f"Epoch {epoch:3d}  fold_index={split_config.fold_index}  "
-                    f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
-                    f"val_acc={val_metrics.accuracy:.4f}"
+            split_config = SplitConfig(
+                train_file=args.train_split_file,
+                val_file=args.val_split_file,
+                test_file=args.test_split_file,
+                num_folds=args.num_folds,
+                fold_index=k,
+                dataset_name=dataset_name,
+            )
+            train_loader, val_loader, _ = create_data_loaders(
+                dataset_base, data_root, split_config, batch_size=args.batch_size
+            )
+            log.log(
+                f"Dataset size (train/val): {len(train_loader.dataset)} train, "
+                f"{len(val_loader.dataset)} val"
+            )
+
+            model = MProGNN(
+                in_channels=DEFAULT_IN_CHANNELS,
+                hidden_channels=args.hidden,
+                num_layers=args.num_layers,
+                dropout=args.dropout,
+                out_classes=args.num_classes,
+                pool=DEFAULT_POOL,
+                edge_dim=DEFAULT_EDGE_DIM,
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+            criterion_ce = nn.CrossEntropyLoss()
+
+            ckpt_path = training_checkpoint_path(results_root, k, args.checkpoint)
+            ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+
+            best_val_acc = 0.0
+            for epoch in range(1, args.epochs + 1):
+                train_loss, train_acc = train_one_epoch(
+                    model,
+                    train_loader,
+                    optimizer,
+                    device,
+                    criterion_ce,
                 )
-        log.log(
-            f"Best validation score (accuracy): {best_val_acc:.4f}  "
-            f"fold_index={split_config.fold_index}  "
-            f"checkpoint={out_dir / DEFAULT_TRAINING_CHECKPOINT_FILENAME}"
-        )
+                val_metrics = evaluate_validation(model, val_loader, device)
+                if val_metrics.accuracy > best_val_acc:
+                    best_val_acc = val_metrics.accuracy
+                    torch.save(model.state_dict(), ckpt_path)
+                if epoch % 10 == 0 or epoch == 1:
+                    log.log(
+                        f"Epoch {epoch:3d}  fold_index={k}  "
+                        f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+                        f"val_acc={val_metrics.accuracy:.4f}"
+                    )
+            log.log(
+                f"Best validation score (accuracy): {best_val_acc:.4f}  "
+                f"fold_index={k}  checkpoint={ckpt_path}"
+            )
+
         log.log(f"Log written to {log_path}")
 
 

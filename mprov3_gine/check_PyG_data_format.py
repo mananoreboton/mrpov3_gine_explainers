@@ -34,6 +34,7 @@ import torch
 from mprov3_gine_explainer_defaults import (
     CHECK_FORMAT_DATASETS_SUBDIR,
     DEFAULT_DATA_ROOT,
+    DEFAULT_NUM_FOLDS,
     DEFAULT_RESULTS_ROOT,
     DEFAULT_TEST_SPLIT_FILE,
     DEFAULT_TRAIN_SPLIT_FILE,
@@ -43,6 +44,7 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_CHECK_FORMAT,
     RESULTS_DATASETS,
     SplitConfig,
+    resolve_fold_indices,
 )
 from dataset import (
     MProV3Dataset,
@@ -520,14 +522,23 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num_folds",
         type=int,
-        default=5,
-        help="Number of folds expected in the split files (default: 5).",
+        default=DEFAULT_NUM_FOLDS,
+        help=f"Number of folds expected in the split files (default: {DEFAULT_NUM_FOLDS}).",
     )
-    parser.add_argument(
+    fold_group = parser.add_mutually_exclusive_group()
+    fold_group.add_argument(
         "--fold_index",
         type=int,
-        default=0,
-        help="Fold index to use when checking split indices (default: 0).",
+        default=None,
+        help="Check split indices for a single fold only. Default: all folds.",
+    )
+    fold_group.add_argument(
+        "--fold_indices",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="K",
+        help="Check these fold indices only. Default: all folds.",
     )
     parser.add_argument(
         "--num_classes",
@@ -572,33 +583,42 @@ def main() -> None:
 
     splits_root = Path(args.splits_root or DEFAULT_DATA_ROOT)
 
+    fold_list = resolve_fold_indices(
+        args.num_folds,
+        fold_index=args.fold_index,
+        fold_indices=args.fold_indices,
+    )
+
     log_dir = results_root / RESULTS_CHECK_FORMAT / CHECK_FORMAT_DATASETS_SUBDIR
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "check_output.log"
 
+    all_ok = True
     with RunLogger(log_path) as log:
         log.log(
             f"Checking PyG output dataset: {dataset_root} / {dataset_name} "
-            f"(splits from {splits_root}, fold_index={args.fold_index}, num_folds={args.num_folds})"
+            f"(splits from {splits_root}, folds={fold_list}, num_folds={args.num_folds})"
         )
 
-        ok, results = run_checks(
-            dataset_root=dataset_root,
-            splits_root=splits_root,
-            dataset_name=dataset_name,
-            train_split_file=args.train_split_file,
-            val_split_file=args.val_split_file,
-            test_split_file=args.test_split_file,
-            num_folds=args.num_folds,
-            fold_index=args.fold_index,
-            num_classes=args.num_classes,
-        )
+        for k in fold_list:
+            log.log(f"--- fold_index={k} ---")
+            ok, results = run_checks(
+                dataset_root=dataset_root,
+                splits_root=splits_root,
+                dataset_name=dataset_name,
+                train_split_file=args.train_split_file,
+                val_split_file=args.val_split_file,
+                test_split_file=args.test_split_file,
+                num_folds=args.num_folds,
+                fold_index=k,
+                num_classes=args.num_classes,
+            )
+            all_ok = all_ok and ok
+            for r in results:
+                status = "OK" if r.ok else "ERROR"
+                log.log(f"[{status}] {r.message}")
 
-        for r in results:
-            status = "OK" if r.ok else "ERROR"
-            log.log(f"[{status}] {r.message}")
-
-        if ok:
+        if all_ok:
             log.log("All output-data-format checks passed.")
         else:
             log.log(
@@ -607,7 +627,7 @@ def main() -> None:
             )
         log.log(f"Log written to {log_path}")
 
-    raise SystemExit(0 if ok else 1)
+    raise SystemExit(0 if all_ok else 1)
 
 
 if __name__ == "__main__":

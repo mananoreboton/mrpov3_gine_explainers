@@ -21,17 +21,43 @@ from mprov3_gine_explainer_defaults.data_path_defaults import (
 )
 
 
+def training_checkpoint_path(
+    results_root: Path,
+    fold_index: int,
+    checkpoint_name: str = DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+) -> Path:
+    """Path under ``results_root/trainings/fold_<fold_index>/<checkpoint_name>`` (train.py writes here)."""
+    return results_root / RESULTS_TRAININGS / f"fold_{fold_index}" / checkpoint_name
+
+
 def resolve_checkpoint_path(
     results_root: Path,
     checkpoint_name: str = DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    fold_index: int | None = None,
 ) -> Path:
-    """Resolve path to ``results_root/trainings/<checkpoint_name>``."""
-    path = results_root / RESULTS_TRAININGS / checkpoint_name
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"Checkpoint not found: {path}. Run train.py first."
-        )
-    return path
+    """
+    If *fold_index* is None: ``results_root/trainings/<checkpoint_name>`` (legacy flat layout).
+    If set: per-fold file first; for fold 0 only, fall back to the flat path if missing.
+    """
+    trainings = results_root / RESULTS_TRAININGS
+    if fold_index is None:
+        path = trainings / checkpoint_name
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"Checkpoint not found: {path}. Run train.py first."
+            )
+        return path
+
+    per_fold = training_checkpoint_path(results_root, fold_index, checkpoint_name)
+    if per_fold.is_file():
+        return per_fold
+    if fold_index == 0:
+        legacy = trainings / checkpoint_name
+        if legacy.is_file():
+            return legacy
+    raise FileNotFoundError(
+        f"Checkpoint not found: {per_fold}. Run train.py for this fold first."
+    )
 
 
 def resolve_dataset_dir(results_root: Path) -> Path:

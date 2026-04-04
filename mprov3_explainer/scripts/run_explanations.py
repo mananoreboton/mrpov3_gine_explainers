@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 import time
+from typing import Any
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -39,6 +40,7 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_IG_N_STEPS,
     DEFAULT_IN_CHANNELS,
     DEFAULT_MPRO_SNAPSHOT_DIR_NAME,
+    DEFAULT_NUM_FOLDS,
     DEFAULT_NUM_LAYERS,
     DEFAULT_OUT_CLASSES,
     DEFAULT_PG_EXPLAINER_EPOCHS,
@@ -52,6 +54,7 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_DIR_NAME,
     RESULTS_EXPLANATIONS,
     SplitConfig,
+    resolve_fold_indices,
 )
 
 from mprov3_explainer import (
@@ -101,7 +104,10 @@ def _parse_args() -> argparse.Namespace:
         "--checkpoint",
         type=str,
         default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
-        help=f"Checkpoint filename under results_root/trainings/ (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
+        help=(
+            f"Checkpoint filename under results_root/trainings/fold_<k>/ "
+            f"(default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME})."
+        ),
     )
     parser.add_argument(
         "--train_split_file", type=str, default=DEFAULT_TRAIN_SPLIT_FILE,
@@ -112,8 +118,22 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--test_split_file", type=str, default=DEFAULT_TEST_SPLIT_FILE,
     )
-    parser.add_argument("--num_folds", type=int, default=5)
-    parser.add_argument("--fold_index", type=int, default=0)
+    parser.add_argument("--num_folds", type=int, default=DEFAULT_NUM_FOLDS)
+    fold_group = parser.add_mutually_exclusive_group()
+    fold_group.add_argument(
+        "--fold_index",
+        type=int,
+        default=None,
+        help="Run explainers for a single fold only. Default: all folds.",
+    )
+    fold_group.add_argument(
+        "--fold_indices",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="K",
+        help="Run for these fold indices only. Default: all folds.",
+    )
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--hidden", type=int, default=DEFAULT_HIDDEN_CHANNELS)
     parser.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS)
@@ -206,7 +226,12 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    checkpoint_path = resolve_checkpoint_path(results_root, args.checkpoint)
+    fold_list = resolve_fold_indices(
+        args.num_folds,
+        fold_index=args.fold_index,
+        fold_indices=args.fold_indices,
+    )
+
     resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
     dataset_name = BUILT_DATASET_FOLDER_NAME
@@ -214,214 +239,224 @@ def main() -> None:
     from loaders import create_data_loaders
     from model import MProGNN
 
-    split_config = SplitConfig(
-        train_file=args.train_split_file,
-        val_file=args.val_split_file,
-        test_file=args.test_split_file,
-        num_folds=args.num_folds,
-        fold_index=args.fold_index,
-        dataset_name=dataset_name,
-    )
-    train_loader, _, test_loader = create_data_loaders(
-        dataset_base, data_root, split_config, batch_size=args.batch_size,
-    )
-
     device = get_device()
-    model = MProGNN(
-        in_channels=DEFAULT_IN_CHANNELS,
-        hidden_channels=args.hidden,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-        out_classes=args.num_classes,
-        pool=DEFAULT_POOL,
-        edge_dim=DEFAULT_EDGE_DIM,
-    ).to(device)
-    model.load_state_dict(
-        torch.load(checkpoint_path, map_location=device, weights_only=False)
-    )
-    model.eval()
 
-    fold_seg = f"fold_{args.fold_index}"
-    explainer_results_root = (
-        _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME / "folds" / fold_seg
-    )
-
-    # Collect per-explainer summaries for the comparison report
-    all_summaries: dict[str, dict] = {}
-    all_per_graph: dict[str, list[dict]] = {}
-
-    for explainer_name in explainer_names:
-        spec = get_spec(explainer_name)
-
-        # Resolve per-explainer kwargs
-        explainer_kwargs: dict = {"num_classes": args.num_classes}
-        if explainer_name in ("IGNODE", "IGEDGE"):
-            explainer_kwargs["n_steps"] = args.ig_n_steps
-        if explainer_name == "PGMEXPL":
-            explainer_kwargs["num_samples"] = args.pgm_num_samples
-
-        epochs_for_builder = args.explainer_epochs
-        if explainer_name == "PGEXPL":
-            epochs_for_builder = args.pg_explainer_epochs
-
-        pg_train_cap: int | None = args.pg_train_max_graphs
-        if (
-            explainer_name == "PGEXPL"
-            and pg_train_cap is None
-            and args.max_graphs is not None
-        ):
-            pg_train_cap = min(2048, max(256, args.max_graphs * 128))
-
-        print(f"\n--- {explainer_name} ---")
-        t0 = time.perf_counter()
-        results: list = []
-        for result in run_explanations(
-            model,
-            test_loader,
-            device,
-            explainer_name=explainer_name,
-            explainer_epochs=epochs_for_builder,
-            max_graphs=args.max_graphs,
-            get_graph_id=_get_graph_id,
-            apply_preprocessing_flag=not args.no_preprocessing,
-            correct_class_only=not args.no_correct_class_only,
-            train_loader=train_loader if spec.needs_training else None,
-            pg_train_max_graphs=pg_train_cap if explainer_name == "PGEXPL" else None,
-            paper_metrics=args.paper_metrics,
-            paper_n_thresholds=args.paper_n_thresholds,
-            **explainer_kwargs,
-        ):
-            results.append(result)
-            print(
-                f"  {result.graph_id}: fid+={result.fidelity_fid_plus:.4f} "
-                f"fid-={result.fidelity_fid_minus:.4f}"
-                f" char={result.pyg_characterization:.4f}"
-                f" Fsuf={result.paper_sufficiency:.4f}"
-                f" Fcom={result.paper_comprehensiveness:.4f}"
-                f" Ff1={result.paper_f1_fidelity:.4f}"
-                + ("" if result.valid else " [excluded]")
-                + (f" ({result.elapsed_s:.2f}s)" if result.elapsed_s > 0 else "")
-            )
-        wall_time = time.perf_counter() - t0
-
-        mean_fid_plus, mean_fid_minus = aggregate_fidelity(
-            results, valid_only=args.fidelity_valid_only,
+    for k in fold_list:
+        print(
+            f"\n{'#' * 60}\n# fold_index={k} ({k + 1}/{args.num_folds})\n{'#' * 60}",
+            flush=True,
         )
-        mean_char = sum(r.pyg_characterization for r in results) / len(results) if results else 0.0
-        mean_fsuf = sum(r.paper_sufficiency for r in results) / len(results) if results else 0.0
-        mean_fcom = sum(r.paper_comprehensiveness for r in results) / len(results) if results else 0.0
-        mean_ff1 = sum(r.paper_f1_fidelity for r in results) / len(results) if results else 0.0
-        n_valid = sum(1 for r in results if r.valid)
-        print(f"Mean fidelity (fid+): {mean_fid_plus:.4f}")
-        print(f"Mean fidelity (fid-): {mean_fid_minus:.4f}")
-        print(f"Mean characterization (PyG): {mean_char:.4f}")
-        print(f"Mean paper sufficiency (Fsuf): {mean_fsuf:.4f}")
-        print(f"Mean paper comprehensiveness (Fcom): {mean_fcom:.4f}")
-        print(f"Mean paper F1-fidelity (Ff1): {mean_ff1:.4f}")
-        print(f"Explained {len(results)} graphs ({n_valid} valid) in {wall_time:.1f}s.")
-
-        # Save per-explainer report + masks
-        out_path = explanations_run_dir(explainer_results_root, explainer_name)
-        if out_path.exists() and any(out_path.iterdir()):
-            print(f"[INFO] Output exists; overwriting under: {out_path}", flush=True)
-        out_path.mkdir(parents=True, exist_ok=True)
-
-        per_graph_entries = []
-        for r in results:
-            per_graph_entries.append({
-                "graph_id": r.graph_id,
-                "fidelity_plus": r.fidelity_fid_plus,
-                "fidelity_minus": r.fidelity_fid_minus,
-                "pyg_characterization": r.pyg_characterization,
-                "paper_sufficiency": r.paper_sufficiency,
-                "paper_comprehensiveness": r.paper_comprehensiveness,
-                "paper_f1_fidelity": r.paper_f1_fidelity,
-                "valid": r.valid,
-                "correct_class": r.correct_class,
-                "has_node_mask": r.has_node_mask,
-                "has_edge_mask": r.has_edge_mask,
-                "elapsed_s": r.elapsed_s,
-            })
-
-        report = {
-            "mean_fidelity_plus": mean_fid_plus,
-            "mean_fidelity_minus": mean_fid_minus,
-            "mean_pyg_characterization": mean_char,
-            "mean_paper_sufficiency": mean_fsuf,
-            "mean_paper_comprehensiveness": mean_fcom,
-            "mean_paper_f1_fidelity": mean_ff1,
-            "num_graphs": len(results),
-            "num_valid": n_valid,
-            "explainer": explainer_name,
-            "wall_time_s": wall_time,
-            "per_graph": per_graph_entries,
-        }
-        (out_path / "explanation_report.json").write_text(
-            json.dumps(report, indent=2), encoding="utf-8",
+        checkpoint_path = resolve_checkpoint_path(
+            results_root, args.checkpoint, fold_index=k
         )
 
-        masks_dir = out_path / "masks"
-        masks_dir.mkdir(parents=True, exist_ok=True)
-        for r in results:
-            mask_data: dict[str, Any] = {}
+        split_config = SplitConfig(
+            train_file=args.train_split_file,
+            val_file=args.val_split_file,
+            test_file=args.test_split_file,
+            num_folds=args.num_folds,
+            fold_index=k,
+            dataset_name=dataset_name,
+        )
+        train_loader, _, test_loader = create_data_loaders(
+            dataset_base, data_root, split_config, batch_size=args.batch_size,
+        )
 
-            ei = r.explanation.edge_index
-            if hasattr(ei, "cpu"):
-                ei = ei.cpu()
-            mask_data["edge_index"] = ei.tolist() if hasattr(ei, "tolist") else ei
+        model = MProGNN(
+            in_channels=DEFAULT_IN_CHANNELS,
+            hidden_channels=args.hidden,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+            out_classes=args.num_classes,
+            pool=DEFAULT_POOL,
+            edge_dim=DEFAULT_EDGE_DIM,
+        ).to(device)
+        model.load_state_dict(
+            torch.load(checkpoint_path, map_location=device, weights_only=False)
+        )
+        model.eval()
 
-            em = getattr(r.explanation, "edge_mask", None)
-            if em is not None:
-                if hasattr(em, "cpu"):
-                    em = em.cpu()
-                mask_data["edge_mask"] = em.tolist() if hasattr(em, "tolist") else em
+        fold_seg = f"fold_{k}"
+        explainer_results_root = (
+            _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME / "folds" / fold_seg
+        )
 
-            nm = getattr(r.explanation, "node_mask", None)
-            if nm is not None:
-                if hasattr(nm, "cpu"):
-                    nm = nm.cpu()
-                mask_data["node_mask"] = nm.tolist() if hasattr(nm, "tolist") else nm
+        # Collect per-explainer summaries for the comparison report
+        all_summaries: dict[str, dict] = {}
+        all_per_graph: dict[str, list[dict]] = {}
 
-            (masks_dir / f"{r.graph_id}.json").write_text(
-                json.dumps(mask_data, indent=2), encoding="utf-8",
+        for explainer_name in explainer_names:
+            spec = get_spec(explainer_name)
+
+            # Resolve per-explainer kwargs
+            explainer_kwargs: dict = {"num_classes": args.num_classes}
+            if explainer_name in ("IGNODE", "IGEDGE"):
+                explainer_kwargs["n_steps"] = args.ig_n_steps
+            if explainer_name == "PGMEXPL":
+                explainer_kwargs["num_samples"] = args.pgm_num_samples
+
+            epochs_for_builder = args.explainer_epochs
+            if explainer_name == "PGEXPL":
+                epochs_for_builder = args.pg_explainer_epochs
+
+            pg_train_cap: int | None = args.pg_train_max_graphs
+            if (
+                explainer_name == "PGEXPL"
+                and pg_train_cap is None
+                and args.max_graphs is not None
+            ):
+                pg_train_cap = min(2048, max(256, args.max_graphs * 128))
+
+            print(f"\n--- {explainer_name} ---")
+            t0 = time.perf_counter()
+            results: list = []
+            for result in run_explanations(
+                model,
+                test_loader,
+                device,
+                explainer_name=explainer_name,
+                explainer_epochs=epochs_for_builder,
+                max_graphs=args.max_graphs,
+                get_graph_id=_get_graph_id,
+                apply_preprocessing_flag=not args.no_preprocessing,
+                correct_class_only=not args.no_correct_class_only,
+                train_loader=train_loader if spec.needs_training else None,
+                pg_train_max_graphs=pg_train_cap if explainer_name == "PGEXPL" else None,
+                paper_metrics=args.paper_metrics,
+                paper_n_thresholds=args.paper_n_thresholds,
+                **explainer_kwargs,
+            ):
+                results.append(result)
+                print(
+                    f"  {result.graph_id}: fid+={result.fidelity_fid_plus:.4f} "
+                    f"fid-={result.fidelity_fid_minus:.4f}"
+                    f" char={result.pyg_characterization:.4f}"
+                    f" Fsuf={result.paper_sufficiency:.4f}"
+                    f" Fcom={result.paper_comprehensiveness:.4f}"
+                    f" Ff1={result.paper_f1_fidelity:.4f}"
+                    + ("" if result.valid else " [excluded]")
+                    + (f" ({result.elapsed_s:.2f}s)" if result.elapsed_s > 0 else "")
+                )
+            wall_time = time.perf_counter() - t0
+
+            mean_fid_plus, mean_fid_minus = aggregate_fidelity(
+                results, valid_only=args.fidelity_valid_only,
             )
-        print(f"Report and masks saved to {out_path}")
+            mean_char = sum(r.pyg_characterization for r in results) / len(results) if results else 0.0
+            mean_fsuf = sum(r.paper_sufficiency for r in results) / len(results) if results else 0.0
+            mean_fcom = sum(r.paper_comprehensiveness for r in results) / len(results) if results else 0.0
+            mean_ff1 = sum(r.paper_f1_fidelity for r in results) / len(results) if results else 0.0
+            n_valid = sum(1 for r in results if r.valid)
+            print(f"Mean fidelity (fid+): {mean_fid_plus:.4f}")
+            print(f"Mean fidelity (fid-): {mean_fid_minus:.4f}")
+            print(f"Mean characterization (PyG): {mean_char:.4f}")
+            print(f"Mean paper sufficiency (Fsuf): {mean_fsuf:.4f}")
+            print(f"Mean paper comprehensiveness (Fcom): {mean_fcom:.4f}")
+            print(f"Mean paper F1-fidelity (Ff1): {mean_ff1:.4f}")
+            print(f"Explained {len(results)} graphs ({n_valid} valid) in {wall_time:.1f}s.")
 
-        all_summaries[explainer_name] = {
-            "mean_fid_plus": mean_fid_plus,
-            "mean_fid_minus": mean_fid_minus,
-            "mean_pyg_characterization": mean_char,
-            "mean_paper_sufficiency": mean_fsuf,
-            "mean_paper_comprehensiveness": mean_fcom,
-            "mean_paper_f1_fidelity": mean_ff1,
-            "num_graphs": len(results),
-            "num_valid": n_valid,
-            "wall_time_s": wall_time,
+            # Save per-explainer report + masks
+            out_path = explanations_run_dir(explainer_results_root, explainer_name)
+            if out_path.exists() and any(out_path.iterdir()):
+                print(f"[INFO] Output exists; overwriting under: {out_path}", flush=True)
+            out_path.mkdir(parents=True, exist_ok=True)
+
+            per_graph_entries = []
+            for r in results:
+                per_graph_entries.append({
+                    "graph_id": r.graph_id,
+                    "fidelity_plus": r.fidelity_fid_plus,
+                    "fidelity_minus": r.fidelity_fid_minus,
+                    "pyg_characterization": r.pyg_characterization,
+                    "paper_sufficiency": r.paper_sufficiency,
+                    "paper_comprehensiveness": r.paper_comprehensiveness,
+                    "paper_f1_fidelity": r.paper_f1_fidelity,
+                    "valid": r.valid,
+                    "correct_class": r.correct_class,
+                    "has_node_mask": r.has_node_mask,
+                    "has_edge_mask": r.has_edge_mask,
+                    "elapsed_s": r.elapsed_s,
+                })
+
+            report = {
+                "mean_fidelity_plus": mean_fid_plus,
+                "mean_fidelity_minus": mean_fid_minus,
+                "mean_pyg_characterization": mean_char,
+                "mean_paper_sufficiency": mean_fsuf,
+                "mean_paper_comprehensiveness": mean_fcom,
+                "mean_paper_f1_fidelity": mean_ff1,
+                "num_graphs": len(results),
+                "num_valid": n_valid,
+                "explainer": explainer_name,
+                "wall_time_s": wall_time,
+                "per_graph": per_graph_entries,
+            }
+            (out_path / "explanation_report.json").write_text(
+                json.dumps(report, indent=2), encoding="utf-8",
+            )
+
+            masks_dir = out_path / "masks"
+            masks_dir.mkdir(parents=True, exist_ok=True)
+            for r in results:
+                mask_data: dict[str, Any] = {}
+
+                ei = r.explanation.edge_index
+                if hasattr(ei, "cpu"):
+                    ei = ei.cpu()
+                mask_data["edge_index"] = ei.tolist() if hasattr(ei, "tolist") else ei
+
+                em = getattr(r.explanation, "edge_mask", None)
+                if em is not None:
+                    if hasattr(em, "cpu"):
+                        em = em.cpu()
+                    mask_data["edge_mask"] = em.tolist() if hasattr(em, "tolist") else em
+
+                nm = getattr(r.explanation, "node_mask", None)
+                if nm is not None:
+                    if hasattr(nm, "cpu"):
+                        nm = nm.cpu()
+                    mask_data["node_mask"] = nm.tolist() if hasattr(nm, "tolist") else nm
+
+                (masks_dir / f"{r.graph_id}.json").write_text(
+                    json.dumps(mask_data, indent=2), encoding="utf-8",
+                )
+            print(f"Report and masks saved to {out_path}")
+
+            all_summaries[explainer_name] = {
+                "mean_fid_plus": mean_fid_plus,
+                "mean_fid_minus": mean_fid_minus,
+                "mean_pyg_characterization": mean_char,
+                "mean_paper_sufficiency": mean_fsuf,
+                "mean_paper_comprehensiveness": mean_fcom,
+                "mean_paper_f1_fidelity": mean_ff1,
+                "num_graphs": len(results),
+                "num_valid": n_valid,
+                "wall_time_s": wall_time,
+            }
+            all_per_graph[explainer_name] = per_graph_entries
+
+        # Write comparison report
+        comparison_path = explainer_results_root / RESULTS_EXPLANATIONS
+        comparison_path.mkdir(parents=True, exist_ok=True)
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        comparison = {
+            "generated_at": generated_at,
+            "explainers": explainer_names,
+            "per_explainer": all_summaries,
+            "per_graph_per_explainer": all_per_graph,
         }
-        all_per_graph[explainer_name] = per_graph_entries
-
-    # Write comparison report
-    comparison_path = explainer_results_root / RESULTS_EXPLANATIONS
-    comparison_path.mkdir(parents=True, exist_ok=True)
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    comparison = {
-        "generated_at": generated_at,
-        "explainers": explainer_names,
-        "per_explainer": all_summaries,
-        "per_graph_per_explainer": all_per_graph,
-    }
-    (comparison_path / "comparison_report.json").write_text(
-        json.dumps(comparison, indent=2), encoding="utf-8",
-    )
-    html_path = comparison_path / "comparison_report.html"
-    write_comparison_report_html(
-        html_path,
-        comparison,
-        paper_metrics_computed=args.paper_metrics,
-        fidelity_valid_only=args.fidelity_valid_only,
-    )
-    print(f"\nComparison report: {comparison_path / 'comparison_report.json'}")
-    print(f"Comparison HTML:   {html_path}")
+        (comparison_path / "comparison_report.json").write_text(
+            json.dumps(comparison, indent=2), encoding="utf-8",
+        )
+        html_path = comparison_path / "comparison_report.html"
+        write_comparison_report_html(
+            html_path,
+            comparison,
+            paper_metrics_computed=args.paper_metrics,
+            fidelity_valid_only=args.fidelity_valid_only,
+        )
+        print(f"\nComparison report: {comparison_path / 'comparison_report.json'}")
+        print(f"Comparison HTML:   {html_path}")
 
 
 if __name__ == "__main__":

@@ -188,6 +188,14 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS)
     p.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT)
     p.add_argument("--num_classes", type=int, default=DEFAULT_OUT_CLASSES)
+    p.add_argument(
+        "--fold_indices",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="K",
+        help="Include only these fold indices in the report (default: all folds with explanation data).",
+    )
     return p.parse_args()
 
 
@@ -211,6 +219,21 @@ def main() -> None:
             f"No explanations found under {results_root / 'folds'} or "
             f"{results_root / RESULTS_EXPLANATIONS}. Run run_explanations.py first.",
         )
+
+    if args.fold_indices is not None:
+        order_map: dict[int, int] = {}
+        for pos, idx in enumerate(args.fold_indices):
+            if idx not in order_map:
+                order_map[idx] = pos
+        discovered_folds = {e[0] for e in fold_entries}
+        missing = set(order_map.keys()) - discovered_folds
+        if missing:
+            raise FileNotFoundError(
+                f"No explanations for fold indices {sorted(missing)}. "
+                f"Discovered folds with data: {sorted(discovered_folds)}."
+            )
+        fold_entries = [e for e in fold_entries if e[0] in order_map]
+        fold_entries.sort(key=lambda e: (order_map[e[0]], e[0]))
 
     if args.explainers:
         explainer_names = list(args.explainers)
