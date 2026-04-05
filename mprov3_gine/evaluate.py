@@ -1,12 +1,8 @@
 """
-Classify the test set on the trained GNN.
-Loads a saved checkpoint from results/trainings/fold_<k>/ (or legacy flat trainings/ for fold 0).
-Saves per-sample results to results/classifications/fold_<fold_index>/ and writes
-results/classifications/classification_summary.json (scan of all fold_*/evaluation_results.json).
-Usage:
-  uv run python evaluate.py [--data_root /path/to/snapshot] [--checkpoint best_gnn.pt]
-  uv run python evaluate.py ... --fold_index 0
-  uv run python evaluate.py ... --fold_indices 0 1 2
+Run test-set classification with a saved training checkpoint (independent of train.py).
+
+Writes results/classifications/fold_<k>/evaluation_results.json and classification_summary.json.
+See README.md (Usage) and ``evaluate.py --help`` for flags (splits and architecture must match training).
 """
 
 import argparse
@@ -17,21 +13,12 @@ from pathlib import Path
 import torch
 from mprov3_gine_explainer_defaults import (
     BUILT_DATASET_FOLDER_NAME,
-    DEFAULT_BATCH_SIZE,
     DEFAULT_DATA_ROOT,
-    DEFAULT_DROPOUT,
     DEFAULT_EDGE_DIM,
-    DEFAULT_HIDDEN_CHANNELS,
     DEFAULT_IN_CHANNELS,
-    DEFAULT_NUM_FOLDS,
-    DEFAULT_NUM_LAYERS,
-    DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
     DEFAULT_RESULTS_ROOT,
-    DEFAULT_TEST_SPLIT_FILE,
-    DEFAULT_TRAIN_SPLIT_FILE,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
-    DEFAULT_VAL_SPLIT_FILE,
     resolve_checkpoint_path,
     resolve_dataset_dir,
     resolve_fold_indices,
@@ -40,6 +27,13 @@ from mprov3_gine_explainer_defaults import (
     SplitConfig,
 )
 
+from cli_common import (
+    add_batch_size_arg,
+    add_checkpoint_arg,
+    add_data_and_results_roots,
+    add_model_loader_args,
+    add_split_and_fold_args,
+)
 from evaluation import evaluate_test_with_predictions, print_test_report
 from loaders import create_data_loaders
 from model import MProGNN
@@ -87,93 +81,22 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate a trained GNN on the test set (classification, run independently of training)."
     )
-    parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="Path to raw MPro snapshot (Splits/); default: DEFAULT_DATA_ROOT",
+    add_data_and_results_roots(
+        parser,
+        results_help="reads trainings/ and datasets/, writes to classifications/.",
+        data_root_help="Path to raw MPro snapshot (Splits/); default: DEFAULT_DATA_ROOT",
     )
-    parser.add_argument(
-        "--results_root",
-        type=str,
-        default=None,
-        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); reads trainings/ and datasets/, writes to classifications/.",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    add_checkpoint_arg(
+        parser,
         help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}); under trainings/fold_<k>/ per fold.",
     )
-    parser.add_argument(
-        "--train_split_file",
-        type=str,
-        default=DEFAULT_TRAIN_SPLIT_FILE,
-        help=f"Train split file in Splits/ (default: {DEFAULT_TRAIN_SPLIT_FILE})",
+    add_split_and_fold_args(
+        parser,
+        fold_index_help="Evaluate a single fold (0 .. num_folds-1). Default: all folds.",
+        fold_indices_help="Evaluate these fold indices only. Default: all folds.",
     )
-    parser.add_argument(
-        "--val_split_file",
-        type=str,
-        default=DEFAULT_VAL_SPLIT_FILE,
-        help=f"Val split file in Splits/ (default: {DEFAULT_VAL_SPLIT_FILE})",
-    )
-    parser.add_argument(
-        "--test_split_file",
-        type=str,
-        default=DEFAULT_TEST_SPLIT_FILE,
-        help=f"Test split file in Splits/ (default: {DEFAULT_TEST_SPLIT_FILE})",
-    )
-    parser.add_argument(
-        "--num_folds",
-        type=int,
-        default=DEFAULT_NUM_FOLDS,
-        help=f"Number of folds (default: {DEFAULT_NUM_FOLDS})",
-    )
-    fold_group = parser.add_mutually_exclusive_group()
-    fold_group.add_argument(
-        "--fold_index",
-        type=int,
-        default=None,
-        help="Evaluate a single fold (0 .. num_folds-1). Default: all folds.",
-    )
-    fold_group.add_argument(
-        "--fold_indices",
-        type=int,
-        nargs="+",
-        default=None,
-        metavar="K",
-        help="Evaluate these fold indices only. Default: all folds.",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=DEFAULT_BATCH_SIZE,
-        help="Batch size for evaluation",
-    )
-    parser.add_argument(
-        "--hidden",
-        type=int,
-        default=DEFAULT_HIDDEN_CHANNELS,
-        help="Must match trained model",
-    )
-    parser.add_argument(
-        "--num_layers",
-        type=int,
-        default=DEFAULT_NUM_LAYERS,
-        help="Must match trained model",
-    )
-    parser.add_argument(
-        "--dropout",
-        type=float,
-        default=DEFAULT_DROPOUT,
-        help="Must match trained model",
-    )
-    parser.add_argument(
-        "--num_classes",
-        type=int,
-        default=DEFAULT_OUT_CLASSES,
-        help=f"Number of classes (default: {DEFAULT_OUT_CLASSES})",
-    )
+    add_batch_size_arg(parser, for_evaluation=True)
+    add_model_loader_args(parser, for_evaluation=True)
     return parser.parse_args()
 
 

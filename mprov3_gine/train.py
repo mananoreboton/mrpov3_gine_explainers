@@ -1,19 +1,12 @@
 """
-Train GNN on MPro Version 3: classification only (Category: low / medium / high potency).
-Requires a pre-built PyG dataset (run build_dataset.py first). Saves best model per fold to
-results/trainings/fold_<k>/<checkpoint_name>, fold_<k>/training_metrics.json, and
-results/trainings/training_summary.json (aggregate over all fold_*/training_metrics.json).
+Train the GINE classifier on the pre-built PyG dataset (see build_dataset.py).
 
-Usage:
-  uv run python build_dataset.py --data_root /path/to/snapshot
-  uv run python train.py --data_root /path/to/snapshot [--num_folds 5] [--epochs 100]
-  uv run python train.py ... --fold_index 0
-  uv run python train.py ... --fold_indices 0 2 4
+Writes checkpoints and per-fold metrics under results/trainings/, then a training_summary.json
+across folds. CLI flags are documented in README.md (Usage) and ``train.py --help``.
 """
 
 import argparse
 import json
-import re
 from pathlib import Path
 from typing import Optional
 
@@ -21,24 +14,15 @@ import torch
 import torch.nn as nn
 from mprov3_gine_explainer_defaults import (
     BUILT_DATASET_FOLDER_NAME,
-    DEFAULT_BATCH_SIZE,
     DEFAULT_DATA_ROOT,
-    DEFAULT_DROPOUT,
     DEFAULT_EDGE_DIM,
-    DEFAULT_HIDDEN_CHANNELS,
     DEFAULT_IN_CHANNELS,
-    DEFAULT_NUM_FOLDS,
-    DEFAULT_NUM_LAYERS,
-    DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
     DEFAULT_RESULTS_ROOT,
     DEFAULT_SEED,
-    DEFAULT_TEST_SPLIT_FILE,
-    DEFAULT_TRAIN_SPLIT_FILE,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
-    DEFAULT_VAL_SPLIT_FILE,
     RESULTS_DATASETS,
     RESULTS_TRAININGS,
     SplitConfig,
@@ -47,15 +31,26 @@ from mprov3_gine_explainer_defaults import (
     training_checkpoint_path,
 )
 
+from cli_common import (
+    add_batch_size_arg,
+    add_checkpoint_arg,
+    add_data_and_results_roots,
+    add_model_loader_args,
+    add_split_and_fold_args,
+)
 from loaders import create_data_loaders
 from model import MProGNN
 from train_epoch import train_one_epoch
-from utils import RunLogger, log_overwrite_dir_if_nonempty, log_overwrite_if_exists
+from utils import (
+    FOLD_SUBDIR_NAME_RE,
+    RunLogger,
+    log_overwrite_dir_if_nonempty,
+    log_overwrite_if_exists,
+)
 from validation import evaluate_validation
 
 _TRAINING_METRICS_JSON = "training_metrics.json"
 _TRAINING_SUMMARY_JSON = "training_summary.json"
-_FOLD_DIR_RE = re.compile(r"^fold_(\d+)$")
 
 
 def _write_fold_training_metrics(
@@ -86,7 +81,7 @@ def scan_and_write_training_summary(trainings_root: Path, log) -> None:
     """Load all fold_*/training_metrics.json and write trainings/training_summary.json."""
     fold_entries: list[dict] = []
     for child in sorted(trainings_root.iterdir(), key=lambda p: p.name):
-        if not child.is_dir() or not _FOLD_DIR_RE.match(child.name):
+        if not child.is_dir() or not FOLD_SUBDIR_NAME_RE.match(child.name):
             continue
         metrics_path = child / _TRAINING_METRICS_JSON
         if not metrics_path.is_file():
@@ -145,76 +140,24 @@ def scan_and_write_training_summary(trainings_root: Path, log) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train GNN on MPro Version 3 (classification)")
-    parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="Path to raw MPro snapshot (Splits/, Info.csv); default: DEFAULT_DATA_ROOT",
+    add_data_and_results_roots(
+        parser,
+        results_help="reads results/datasets/data.pt, writes to results/trainings/.",
     )
-    parser.add_argument(
-        "--results_root",
-        type=str,
-        default=None,
-        help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); reads results/datasets/data.pt, writes to results/trainings/.",
+    add_split_and_fold_args(
+        parser,
+        fold_index_help="Train a single fold (0 .. num_folds-1). Default: all folds.",
+        fold_indices_help="Train these fold indices only. Default: all folds 0..num_folds-1.",
     )
-    parser.add_argument(
-        "--train_split_file",
-        type=str,
-        default=DEFAULT_TRAIN_SPLIT_FILE,
-        help=f"Train split file in Splits/ (default: {DEFAULT_TRAIN_SPLIT_FILE})",
-    )
-    parser.add_argument(
-        "--val_split_file",
-        type=str,
-        default=DEFAULT_VAL_SPLIT_FILE,
-        help=f"Val split file in Splits/ (default: {DEFAULT_VAL_SPLIT_FILE})",
-    )
-    parser.add_argument(
-        "--test_split_file",
-        type=str,
-        default=DEFAULT_TEST_SPLIT_FILE,
-        help=f"Test split file in Splits/ (default: {DEFAULT_TEST_SPLIT_FILE})",
-    )
-    parser.add_argument(
-        "--num_folds",
-        type=int,
-        default=DEFAULT_NUM_FOLDS,
-        help=f"Number of folds (default: {DEFAULT_NUM_FOLDS})",
-    )
-    fold_group = parser.add_mutually_exclusive_group()
-    fold_group.add_argument(
-        "--fold_index",
-        type=int,
-        default=None,
-        help="Train a single fold (0 .. num_folds-1). Default: all folds.",
-    )
-    fold_group.add_argument(
-        "--fold_indices",
-        type=int,
-        nargs="+",
-        default=None,
-        metavar="K",
-        help="Train these fold indices only. Default: all folds 0..num_folds-1.",
-    )
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    add_checkpoint_arg(
+        parser,
         help=f"Checkpoint filename under each trainings/fold_<k>/ (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
     )
     parser.add_argument("--epochs", type=int, default=DEFAULT_TRAINING_EPOCHS)
-    parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
+    add_batch_size_arg(parser, for_evaluation=False)
     parser.add_argument("--lr", type=float, default=DEFAULT_TRAINING_LR)
-    parser.add_argument("--hidden", type=int, default=DEFAULT_HIDDEN_CHANNELS)
-    parser.add_argument("--num_layers", type=int, default=DEFAULT_NUM_LAYERS)
-    parser.add_argument("--dropout", type=float, default=DEFAULT_DROPOUT)
+    add_model_loader_args(parser, for_evaluation=False)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument(
-        "--num_classes",
-        type=int,
-        default=DEFAULT_OUT_CLASSES,
-        help=f"Number of classes (Category, default: {DEFAULT_OUT_CLASSES})",
-    )
     parser.add_argument(
         "--no_validation",
         action="store_true",

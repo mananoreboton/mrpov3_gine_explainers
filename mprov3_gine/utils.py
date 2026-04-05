@@ -4,8 +4,12 @@ Shared utilities: logging, overwrite notices, and HTML helpers.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable, List, Optional
+
+# Matches subdirectories named fold_<k> (e.g. fold_0) under results/trainings or classifications.
+FOLD_SUBDIR_NAME_RE = re.compile(r"^fold_(\d+)$")
 
 
 def log_overwrite_if_exists(path: Path, log: Callable[[str], None]) -> None:

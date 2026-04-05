@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from pathlib import Path
 from typing import Any, Callable, List, NamedTuple, Sequence
 
@@ -27,10 +26,15 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_TRAININGS,
 )
 from dataset import MProV3Dataset, load_dataset_pdb_order
-from utils import RunLogger, log_overwrite_dir_if_nonempty, html_document, html_escape
+from utils import (
+    FOLD_SUBDIR_NAME_RE,
+    RunLogger,
+    html_document,
+    html_escape,
+    log_overwrite_dir_if_nonempty,
+)
 from visualize_graphs import draw_graph
 
-_FOLD_DIR = re.compile(r"^fold_(\d+)$")
 _TRAINING_SUMMARY_JSON = "training_summary.json"
 _TRAINING_METRICS_JSON = "training_metrics.json"
 
@@ -168,7 +172,7 @@ def discover_evaluation_json_paths(classifications_dir: Path) -> List[Path]:
     """Paths to evaluation_results.json under fold_*; else legacy flat file."""
     fold_paths: List[tuple[int, Path]] = []
     for p in classifications_dir.glob("fold_*/evaluation_results.json"):
-        m = _FOLD_DIR.match(p.parent.name)
+        m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
         if m:
             fold_paths.append((int(m.group(1)), p))
     fold_paths.sort(key=lambda x: x[0])
@@ -181,7 +185,7 @@ def discover_evaluation_json_paths(classifications_dir: Path) -> List[Path]:
 
 
 def _fold_index_for_path(path: Path, payload: dict[str, Any]) -> int:
-    m = _FOLD_DIR.match(path.parent.name)
+    m = FOLD_SUBDIR_NAME_RE.match(path.parent.name)
     if m:
         return int(m.group(1))
     return int(payload.get("fold_index", 0))
@@ -455,7 +459,7 @@ def main() -> None:
     else:
         results_root_path = (
             report_dir.parent.parent
-            if _FOLD_DIR.match(report_dir.name)
+            if FOLD_SUBDIR_NAME_RE.match(report_dir.name)
             else report_dir.parent
         ).resolve()
         dataset_root = Path(first["data_root"])

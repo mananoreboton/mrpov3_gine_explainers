@@ -1,5 +1,8 @@
 """
-Data loaders: collate function and factory for train/val/test DataLoaders.
+PyG DataLoaders for train, validation, and test splits.
+
+Expects a built dataset under results/datasets/ and split PDB lists from the raw snapshot.
+See README.md and ``create_data_loaders`` docstring for parameters.
 """
 
 from pathlib import Path
