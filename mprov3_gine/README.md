@@ -63,7 +63,7 @@ flowchart TB
     end
 
     subgraph out_viz [results/visualizations]
-        VizPNG[PNG/SVG/HTML + index by fold and split]
+        VizPNG[PNG/SVG/HTML + index tabs per fold]
         VizLog[visualize.log]
     end
 
@@ -210,7 +210,7 @@ All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at
 | `results/datasets/`                          | `build_dataset.py` (`data.pt`, `pdb_order.txt`)                                            | `build.log`                                    |
 | `results/trainings/`                         | `train.py` (`best_gnn.pt`)                                                                 | `train.log`                                    |
 | `results/classifications/`                   | `evaluate.py` (`evaluation_results.json`), `create_evaluation_report.py` (HTML, `graphs/`) | `evaluate.log`, `create_evaluation_report.log` |
-| `results/visualizations/`                    | `visualize_graphs.py` (fold → train/val/test plan; one draw per graph; `index.html` grouped by fold and split) | `visualize.log`                                |
+| `results/visualizations/`                    | `visualize_graphs.py` (fold → train/val/test plan; one draw per graph; `index.html` with a tab per fold) | `visualize.log`                                |
 | `results/check_format/datasets/`             | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
 | `results/check_format/raw_data/`             | `check_raw_data_format.py` (log only)                                                      | `check_input.log`                              |
 
@@ -302,7 +302,7 @@ Output under `**results/visualizations/**`:
 - `PDB_ID.png`: 2D drawing (RDKit MolDraw2D).
 - `PDB_ID.svg`: vector graphic (only with `--svg`).
 - `PDB_ID.html`: report with PDB ID, category (-1/0/1), pIC50, and tables for nodes (atomic number, x, y, z) and edges (bond type).
-- `index.html`: thumbnails **grouped by fold, then train / val / test** (from raw `Splits/`); `visualize.log`: run log.
+- `index.html`: **one tab per CV fold**, then train / val / test grids (from raw `Splits/`); `visualize.log`: run log.
 
 ### 3. Train (train.py)
 

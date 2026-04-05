@@ -19,7 +19,7 @@ selected graph this script:
 - Bond styles: single = one central line; double = two shifted lines;
   triple = two shifted + central; aromatic = dashed.
 - Saves PNG and SVG under results/visualizations/; writes HTML reports with tables.
-- ``index.html`` groups thumbnails by **fold**, then **train / val / test**.
+- ``index.html`` uses a **tab per CV fold**, then **train / val / test** inside each tab.
 
 Usage (examples):
     uv run python visualize_graphs.py
@@ -422,8 +422,9 @@ def write_index_html(
     """
     Write an index.html page with thumbnail links to all generated graph reports.
 
-    Default entries are grouped by CV **fold**, then **train / val / test**. The same
-    PDB may appear multiple times (different fold/split slots) linking to the same files.
+    Default entries are grouped by CV **fold** (one **tab** per fold in ``index.html``),
+    then **train / val / test** inside each panel. The same PDB may appear multiple times
+    (different fold/split slots) linking to the same files.
 
     entries: (pdb_id, category, pIC50, fold_index, split) with ``None`` fold/split for
     ``--indices`` runs (single **Other** section).
@@ -442,7 +443,17 @@ def write_index_html(
         "border-bottom: 1px solid #ddd; font-size: 1.25rem; } "
         "h2.fold-section:first-of-type { margin-top: 0.5em; } "
         "h3.split-section { margin-top: 1.25em; margin-bottom: 0.5em; font-size: 1.05rem; color: #333; } "
-        ".timestamp { color: #666; font-size: 14px; margin-bottom: 1em; }"
+        ".timestamp { color: #666; font-size: 14px; margin-bottom: 1em; } "
+        ".fold-tablist { display: flex; flex-wrap: wrap; gap: 0.35em; margin: 1em 0 0.5em 0; "
+        "padding: 0; list-style: none; border-bottom: 2px solid #ddd; } "
+        ".fold-tablist button { font: inherit; padding: 0.5em 1em; margin-bottom: -2px; "
+        "border: 2px solid transparent; border-radius: 6px 6px 0 0; background: #f5f5f5; "
+        "cursor: pointer; color: #333; } "
+        ".fold-tablist button:hover { background: #eee; } "
+        ".fold-tablist button[aria-selected='true'] { background: #fff; border-color: #ddd; "
+        "border-bottom-color: #fff; font-weight: 600; } "
+        ".fold-tabpanel { padding-top: 0.5em; } "
+        ".fold-tabpanel[hidden] { display: none !important; } "
     )
 
     by_fold: dict[int, dict[str, List[Tuple[str, Optional[int], Optional[float]]]]] = defaultdict(
@@ -464,30 +475,104 @@ def write_index_html(
         "fold/split headings; thumbnails link to the same PNG/HTML when only one draw ran.</p>",
     ]
 
-    for fold in sorted(by_fold.keys()):
-        split_map = by_fold[fold]
-        n_fold = sum(len(v) for v in split_map.values())
-        body.append(f"<h2 class='fold-section'>Fold {fold} ({n_fold} entries)</h2>")
-        for split in _SPLIT_ORDER:
-            row = split_map.get(split, [])
+    fold_keys = sorted(by_fold.keys())
+    use_tabs = len(fold_keys) > 0
+
+    if use_tabs:
+        body.append('<div class="fold-tabs" id="fold-tabs-root">')
+        body.append('<div role="tablist" class="fold-tablist" aria-label="CV fold">')
+        for i, fold in enumerate(fold_keys):
+            split_map = by_fold[fold]
+            n_fold = sum(len(v) for v in split_map.values())
+            panel_id = f"viz-fold-{fold}"
+            sel = "true" if i == 0 else "false"
             body.append(
-                f"<h3 class='split-section'>{split.capitalize()} ({len(row)})</h3>"
+                f'<button type="button" role="tab" id="tab-{html_escape(panel_id)}" '
+                f'aria-controls="{html_escape(panel_id)}" aria-selected="{sel}" '
+                f'data-viz-panel="{html_escape(panel_id)}">Fold {fold} ({n_fold})</button>'
             )
-            body.append("<div class='grid'>")
-            for pdb_id, category, pIC50 in row:
-                body.extend(_index_card_lines(pdb_id, category, pIC50))
+        if other:
+            opanel = "viz-fold-other"
+            body.append(
+                f'<button type="button" role="tab" id="tab-{html_escape(opanel)}" '
+                f'aria-controls="{html_escape(opanel)}" aria-selected="false" '
+                f'data-viz-panel="{html_escape(opanel)}">Other ({len(other)})</button>'
+            )
+        body.append("</div>")
+
+        for i, fold in enumerate(fold_keys):
+            split_map = by_fold[fold]
+            n_fold = sum(len(v) for v in split_map.values())
+            panel_id = f"viz-fold-{fold}"
+            hidden = "" if i == 0 else " hidden"
+            labelled_by = f"tab-{html_escape(panel_id)}"
+            body.append(
+                f'<div class="fold-tabpanel" role="tabpanel" id="{html_escape(panel_id)}" '
+                f'aria-labelledby="{labelled_by}"{hidden}>'
+            )
+            body.append(
+                f"<h2 class='fold-section'>Fold {fold} ({n_fold} entries)</h2>"
+            )
+            for split in _SPLIT_ORDER:
+                row = split_map.get(split, [])
+                body.append(
+                    f"<h3 class='split-section'>{split.capitalize()} ({len(row)})</h3>"
+                )
+                body.append("<div class='grid'>")
+                for pdb_id, category, pIC50 in row:
+                    body.extend(_index_card_lines(pdb_id, category, pIC50))
+                body.append("</div>")
             body.append("</div>")
 
-    if other:
-        body.append(f"<h2 class='fold-section'>Other ({len(other)} graphs)</h2>")
-        body.append(
-            "<p class='meta' style='margin: -0.5em 0 1em 0;'>"
-            "No fold/split label (e.g. explicit --indices).</p>"
-        )
-        body.append("<div class='grid'>")
-        for pdb_id, category, pIC50 in other:
-            body.extend(_index_card_lines(pdb_id, category, pIC50))
+        if other:
+            panel_id = "viz-fold-other"
+            hidden = " hidden" if fold_keys else ""
+            labelled_by = f"tab-{html_escape(panel_id)}"
+            body.append(
+                f'<div class="fold-tabpanel" role="tabpanel" id="{html_escape(panel_id)}" '
+                f'aria-labelledby="{labelled_by}"{hidden}>'
+            )
+            body.append(f"<h2 class='fold-section'>Other ({len(other)} graphs)</h2>")
+            body.append(
+                "<p class='meta' style='margin: -0.5em 0 1em 0;'>"
+                "No fold/split label (e.g. explicit --indices).</p>"
+            )
+            body.append("<div class='grid'>")
+            for pdb_id, category, pIC50 in other:
+                body.extend(_index_card_lines(pdb_id, category, pIC50))
+            body.append("</div>")
+            body.append("</div>")
+
         body.append("</div>")
+        body.append(
+            "<script>"
+            "(function(){"
+            "var root=document.getElementById('fold-tabs-root');"
+            "if(!root)return;"
+            "var tabs=root.querySelectorAll('[role=tab][data-viz-panel]');"
+            "var panels=root.querySelectorAll('[role=tabpanel]');"
+            "function show(id){"
+            "panels.forEach(function(p){var on=(p.id===id);p.hidden=!on;});"
+            "tabs.forEach(function(t){var on=(t.getAttribute('data-viz-panel')===id);"
+            "t.setAttribute('aria-selected',on?'true':'false');});"
+            "}"
+            "tabs.forEach(function(t){"
+            "t.addEventListener('click',function(){show(t.getAttribute('data-viz-panel'));});"
+            "});"
+            "}());"
+            "</script>"
+        )
+    else:
+        if other:
+            body.append(f"<h2 class='fold-section'>Other ({len(other)} graphs)</h2>")
+            body.append(
+                "<p class='meta' style='margin: -0.5em 0 1em 0;'>"
+                "No fold/split label (e.g. explicit --indices).</p>"
+            )
+            body.append("<div class='grid'>")
+            for pdb_id, category, pIC50 in other:
+                body.extend(_index_card_lines(pdb_id, category, pIC50))
+            body.append("</div>")
 
     html = html_document("MPro ligand graphs — index", body, style=style)
     (out_dir / "index.html").write_text(html, encoding="utf-8")
