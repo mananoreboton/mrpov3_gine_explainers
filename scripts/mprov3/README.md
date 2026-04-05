@@ -70,7 +70,7 @@ SKIP_SYNC=1 ./scripts/mprov3/smoke_gine_explainer.sh
 # One fold: GINE only
 ./scripts/mprov3/run_gine_fold.sh 2
 
-# One fold: explainer only (checkpoint: mprov3_gine/results/trainings/best_gnn.pt)
+# One fold: explainer only (checkpoint: mprov3_gine/results/trainings/fold_<k>/best_gnn.pt)
 ./scripts/mprov3/run_explainer_fold.sh 2
 
 # Full GINE + explainer for fold 2
@@ -82,7 +82,7 @@ NUM_FOLDS=5 ./scripts/mprov3/run_all_folds.sh
 
 ## Python flags used by the explainer step
 
-- **`--results_root`** points at **`mprov3_gine/results`** so checkpoints (`trainings/best_gnn.pt`) and datasets (`datasets/data.pt`) match training.
+- **`--results_root`** points at **`mprov3_gine/results`** so checkpoints (`trainings/fold_<k>/best_gnn.pt`) and datasets (`datasets/data.pt`) match training.
 
 Explainer **artifacts** (reports, masks, comparison HTML) are under **`mprov3_explainer/results/`**, not under GINE results.
 

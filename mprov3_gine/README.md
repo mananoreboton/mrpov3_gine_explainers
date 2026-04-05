@@ -35,7 +35,9 @@ flowchart TB
     end
 
     subgraph out_trainings [results/trainings]
-        BestCkpt[best_gnn.pt]
+        FoldCkpt[fold_k/best_gnn.pt]
+        TrainMetrics[fold_k/training_metrics.json]
+        TrainSummary[training_summary.json]
         TrainLog[train.log]
     end
 
@@ -45,6 +47,7 @@ flowchart TB
 
     subgraph out_classifications [results/classifications]
         EvalJSON[fold_k/evaluation_results.json]
+        ClassifSummary[classification_summary.json]
         EvalLog[evaluate.log]
     end
 
@@ -92,14 +95,17 @@ flowchart TB
     DataPT --> TrainCLI
     PdbOrder --> TrainCLI
     Splits --> TrainCLI
-    TrainCLI --> BestCkpt
+    TrainCLI --> FoldCkpt
+    TrainCLI --> TrainMetrics
+    TrainCLI --> TrainSummary
     TrainCLI --> TrainLog
 
     DataPT --> EvalCLI
     PdbOrder --> EvalCLI
     Splits --> EvalCLI
-    BestCkpt --> EvalCLI
+    FoldCkpt --> EvalCLI
     EvalCLI --> EvalJSON
+    EvalCLI --> ClassifSummary
     EvalCLI --> EvalLog
 
     EvalJSON --> ReportCLI
@@ -208,8 +214,8 @@ All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at
 | Path                                         | Written by                                                                                 | Log file                                       |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
 | `results/datasets/`                          | `build_dataset.py` (`data.pt`, `pdb_order.txt`)                                            | `build.log`                                    |
-| `results/trainings/`                         | `train.py` (`best_gnn.pt`)                                                                 | `train.log`                                    |
-| `results/classifications/`                   | `evaluate.py` (`fold_<k>/evaluation_results.json`), `create_evaluation_report.py` (`index.html`, `graphs/`, per-PDB HTML) | `evaluate.log`, `create_evaluation_report.log` |
+| `results/trainings/`                         | `train.py` (`fold_<k>/best_gnn.pt`, `fold_<k>/training_metrics.json`, `training_summary.json`) | `train.log`                                    |
+| `results/classifications/`                   | `evaluate.py` (`fold_<k>/evaluation_results.json`, `classification_summary.json`), `create_evaluation_report.py` (`index.html`, `graphs/`, per-PDB HTML) | `evaluate.log`, `create_evaluation_report.log` |
 | `results/visualizations/`                    | `visualize_graphs.py` (fold → train/val/test plan; one draw per graph; `index.html` with a tab per fold) | `visualize.log`                                |
 | `results/check_format/datasets/`             | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
 | `results/check_format/raw_data/`             | `check_raw_data_format.py` (log only)                                                      | `check_input.log`                              |
@@ -358,7 +364,7 @@ uv run python train.py \
   --num_classes 3 --seed 42
 ```
 
-The best model (by validation accuracy) is saved as `results/trainings/best_gnn.pt`. Training does not run evaluation; use `evaluate.py` for that.
+For each fold, the best model (by validation accuracy) is saved as **`results/trainings/fold_<k>/<checkpoint>`** (default checkpoint name: `best_gnn.pt`). After each fold, **`results/trainings/fold_<k>/training_metrics.json`** records that fold’s best validation accuracy and the **training accuracy at the same epoch** (when validation was best). After the run, **`results/trainings/training_summary.json`** aggregates every `fold_*/training_metrics.json` under `trainings/` and includes **`best_validation_fold_index`** and **`best_train_accuracy_fold_index`** (tie-break: lower fold index). Training does not run the test split; use `evaluate.py` for that.
 
 ### 4. Evaluate (evaluate.py) — run independently
 
@@ -375,11 +381,13 @@ uv run python evaluate.py --data_root /path/to/snapshot --checkpoint best_gnn.pt
 uv run python evaluate.py --data_root /path/to/snapshot --fold_index 2 --hidden 64 --num_layers 3 --num_classes 3
 ```
 
+After evaluation finishes, **`results/classifications/classification_summary.json`** is rewritten by scanning all **`fold_*/evaluation_results.json`** under that classifications root: it lists **`test_accuracy`** per fold and **`best_classification_fold_index`** (tie-break: lower fold index).
+
 Options: `--data_root`, `--results_root`, `--checkpoint` (filename under `results/trainings/fold_<k>/`), `--train_split_file`, `--val_split_file`, `--test_split_file`, `--num_folds`, `--fold_index`, `--fold_indices`, `--batch_size`, `--hidden`, `--num_layers`, `--dropout`, `--num_classes` (must match the trained model).
 
 #### 4.1. Evaluation report (create_evaluation_report.py)
 
-After running `evaluate.py`, generate an HTML report with graph thumbnails and per-sample real vs predicted category. By default scans **`results/classifications/`** for every **`fold_<k>/evaluation_results.json`** (or a legacy flat **`evaluation_results.json`** at that root) and writes **`index.html`** (one tab per fold), **`graphs/`**, and per-PDB HTML into **`results/classifications/`** (not inside each `fold_<k>/` folder).
+After running `evaluate.py`, generate an HTML report with graph thumbnails and per-sample real vs predicted category. By default scans **`results/classifications/`** for every **`fold_<k>/evaluation_results.json`** (or a legacy flat **`evaluation_results.json`** at that root) and writes **`index.html`** (one tab per fold), **`graphs/`**, and per-PDB HTML into **`results/classifications/`** (not inside each `fold_<k>/` folder). The report starts with a **scores-by-fold** table: validation accuracy (best epoch) and train accuracy at that epoch are read from **`results/trainings/training_summary.json`** if present, otherwise from **`results/trainings/fold_<k>/training_metrics.json`**; test (classification) accuracy comes from the evaluation JSONs. The **best value in each column among the folds included in the report** is highlighted (useful with **`--folds`**).
 
 ```bash
 # All discovered folds; output under results/classifications/
@@ -395,7 +403,7 @@ uv run python create_evaluation_report.py --classifications-dir path/to/fold_1/e
 
 Output under **`results/classifications/`** (or next to a single JSON file if you pass that path):
 
-- `**index.html**`: tab per fold; each tab lists test accuracy and a grid of thumbnails (real vs predicted category, correct/incorrect).
+- `**index.html**`: fold comparison table (val / train@best val / test accuracies, with column bests highlighted); then a tab per fold; each tab lists test accuracy and a grid of thumbnails (real vs predicted category, correct/incorrect).
 - `**graphs/<PDB_ID>.png**`: one image per PDB (shared across folds; each graph drawn once).
 - `**<PDB_ID>.html**`: per-sample page (last fold processed wins if the same PDB appeared twice, which should not happen on disjoint test folds).
 - `**create_evaluation_report.log**`: run log.
@@ -510,9 +518,9 @@ print_test_report(test_metrics)
 | **train_epoch.py**              | One-epoch training step: `train_one_epoch`.                                                                                                                                         |
 | **validation.py**               | Validation: `evaluate_validation`, `ValidationMetrics`.                                                                                                                             |
 | **evaluation.py**               | Evaluation: `evaluate_test`, `TestMetrics`, `print_test_report`.                                                                                                                    |
-| **train.py**                    | CLI: load `results/datasets/data.pt`, train; save to `results/trainings/` and `train.log`.                                                                                          |
-| **evaluate.py**                 | CLI: load `results/trainings/best_gnn.pt`, evaluate; save to `results/classifications/` and `evaluate.log`.                                                                          |
-| **create_evaluation_report.py** | CLI: read `fold_*/evaluation_results.json` (or legacy flat JSON), optional `--folds`; write `index.html` (tabs), `graphs/`, per-PDB HTML under classifications root; `create_evaluation_report.log`. |
+| **train.py**                    | CLI: load `results/datasets/data.pt`, train; save checkpoints and `fold_<k>/training_metrics.json`, `training_summary.json`, and `train.log` under `results/trainings/`. |
+| **evaluate.py**                 | CLI: load `results/trainings/fold_<k>/` checkpoint, evaluate; save `fold_<k>/evaluation_results.json`, `classification_summary.json`, and `evaluate.log` under `results/classifications/`. |
+| **create_evaluation_report.py** | CLI: read `fold_*/evaluation_results.json` (or legacy flat JSON), optional `--folds`; merge training metrics from `trainings/`; write `index.html` (summary table + tabs), `graphs/`, per-PDB HTML; `create_evaluation_report.log`. |
 | **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`.   |
 
 

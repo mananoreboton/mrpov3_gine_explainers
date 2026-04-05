@@ -1,7 +1,8 @@
 """
 Classify the test set on the trained GNN.
 Loads a saved checkpoint from results/trainings/fold_<k>/ (or legacy flat trainings/ for fold 0).
-Saves per-sample results to results/classifications/fold_<fold_index>/ for report generation.
+Saves per-sample results to results/classifications/fold_<fold_index>/ and writes
+results/classifications/classification_summary.json (scan of all fold_*/evaluation_results.json).
 Usage:
   uv run python evaluate.py [--data_root /path/to/snapshot] [--checkpoint best_gnn.pt]
   uv run python evaluate.py ... --fold_index 0
@@ -43,6 +44,43 @@ from evaluation import evaluate_test_with_predictions, print_test_report
 from loaders import create_data_loaders
 from model import MProGNN
 from utils import RunLogger, log_overwrite_if_exists
+
+_CLASSIFICATION_SUMMARY_JSON = "classification_summary.json"
+
+
+def scan_and_write_classification_summary(classifications_root: Path, log) -> None:
+    """Scan fold_*/evaluation_results.json and write classification_summary.json."""
+    summary_path = classifications_root / _CLASSIFICATION_SUMMARY_JSON
+    fold_entries: list[dict] = []
+    for json_path in sorted(classifications_root.glob("fold_*/evaluation_results.json")):
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        fold_entries.append(
+            {
+                "fold_index": int(data["fold_index"]),
+                "test_accuracy": float(data["accuracy"]),
+            }
+        )
+    fold_entries.sort(key=lambda x: x["fold_index"])
+    log_overwrite_if_exists(summary_path, log)
+    if not fold_entries:
+        summary_path.write_text(json.dumps({"folds": []}, indent=2), encoding="utf-8")
+        log(
+            f"Classification summary: no fold_*/evaluation_results.json under "
+            f"{classifications_root}; wrote empty {summary_path.name}"
+        )
+        return
+    best_fold = max(
+        fold_entries,
+        key=lambda f: (f["test_accuracy"], -f["fold_index"]),
+    )["fold_index"]
+    out = {
+        "folds": fold_entries,
+        "best_classification_fold_index": best_fold,
+    }
+    summary_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    log(
+        f"Classification summary: best_classification_fold_index={best_fold} → {summary_path}"
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -228,6 +266,11 @@ def main() -> None:
             results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             log.log(f"Results saved to {results_path}")
             log.log(f"Log written to {log_path}")
+
+    scan_and_write_classification_summary(
+        results_root / RESULTS_CLASSIFICATIONS,
+        print,
+    )
 
 
 if __name__ == "__main__":

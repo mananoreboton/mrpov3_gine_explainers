@@ -2,9 +2,9 @@
 Create an HTML report for a previous run of evaluate.py.
 
 Scans results/classifications/ for fold_*/evaluation_results.json (or legacy flat
-evaluation_results.json), writes index.html (one tab per fold), graphs/, and
-per-sample HTML into that classifications folder. A path to a single
-evaluation_results.json is also accepted (report written next to that file).
+evaluation_results.json), loads validation metrics from results/trainings/ when available,
+writes index.html (fold score table + one tab per fold), graphs/, and per-sample HTML.
+A path to a single evaluation_results.json is also accepted (report written next to that file).
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Any, List, NamedTuple, Sequence
+from typing import Any, Callable, List, NamedTuple, Sequence
 
 import torch
 
@@ -24,13 +24,130 @@ from mprov3_gine_explainer_defaults import (
     PYG_PDB_ORDER_FILENAME,
     RESULTS_CLASSIFICATIONS,
     RESULTS_DATASETS,
+    RESULTS_TRAININGS,
 )
 from dataset import MProV3Dataset, load_dataset_pdb_order
 from utils import RunLogger, log_overwrite_dir_if_nonempty, html_document, html_escape
 from visualize_graphs import draw_graph
 
 _FOLD_DIR = re.compile(r"^fold_(\d+)$")
+_TRAINING_SUMMARY_JSON = "training_summary.json"
+_TRAINING_METRICS_JSON = "training_metrics.json"
 
+
+def load_training_metrics_by_fold(results_root: Path) -> dict[int, dict[str, float]]:
+    """Load per-fold validation / train@best-val from training_summary.json or fold_*/training_metrics.json."""
+    trainings = results_root / RESULTS_TRAININGS
+    summary_path = trainings / _TRAINING_SUMMARY_JSON
+    if summary_path.is_file():
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        out: dict[int, dict[str, float]] = {}
+        for f in data.get("folds", []):
+            k = int(f["fold_index"])
+            out[k] = {
+                "best_validation_accuracy": float(f["best_validation_accuracy"]),
+                "train_accuracy_at_best_validation": float(
+                    f["train_accuracy_at_best_validation"]
+                ),
+            }
+        return out
+    out: dict[int, dict[str, float]] = {}
+    for metrics_path in trainings.glob(f"fold_*/{_TRAINING_METRICS_JSON}"):
+        raw = json.loads(metrics_path.read_text(encoding="utf-8"))
+        k = int(raw["fold_index"])
+        out[k] = {
+            "best_validation_accuracy": float(raw["best_validation_accuracy"]),
+            "train_accuracy_at_best_validation": float(
+                raw["train_accuracy_at_best_validation"]
+            ),
+        }
+    return out
+
+
+def _argmax_fold_tie_low(
+    fold_indices: Sequence[int],
+    value_for: Callable[[int], float | None],
+) -> int | None:
+    """Return fold_index with largest value_for(k); on tie, smallest fold index."""
+    best_k: int | None = None
+    best_v: float | None = None
+    for k in sorted(fold_indices):
+        v = value_for(k)
+        if v is None:
+            continue
+        if best_v is None or v > best_v or (v == best_v and best_k is not None and k < best_k):
+            best_v = v
+            best_k = k
+    return best_k
+
+
+def _format_metric_cell(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.4f}"
+
+
+def _summary_table_html(
+    fold_rows: List[tuple[int, str, float, List[dict]]],
+    training_by_fold: dict[int, dict[str, float]],
+) -> List[str]:
+    """Build fold comparison table rows (validation, train@best val, test accuracy)."""
+    fold_indices = [fr[0] for fr in fold_rows]
+    test_by_fold = {fr[0]: float(fr[2]) for fr in fold_rows}
+
+    def val_for(k: int) -> float | None:
+        m = training_by_fold.get(k)
+        if not m:
+            return None
+        return float(m["best_validation_accuracy"])
+
+    def train_for(k: int) -> float | None:
+        m = training_by_fold.get(k)
+        if not m:
+            return None
+        return float(m["train_accuracy_at_best_validation"])
+
+    best_val_k = _argmax_fold_tie_low(fold_indices, val_for)
+    best_train_k = _argmax_fold_tie_low(fold_indices, train_for)
+    best_test_k = _argmax_fold_tie_low(
+        fold_indices, lambda k: test_by_fold.get(k)
+    )
+
+    lines: List[str] = [
+        "<h2 class='summary-table-heading'>Scores by fold</h2>",
+        "<p class='summary-table-note'>Best value in each column (among folds in this "
+        "report) is highlighted.</p>",
+        "<table class='fold-metrics-summary'>",
+        "<thead><tr>",
+        "<th scope='col'>Fold</th>",
+        "<th scope='col'>Validation accuracy (best epoch)</th>",
+        "<th scope='col'>Train accuracy @ best val</th>",
+        "<th scope='col'>Test accuracy (classification)</th>",
+        "</tr></thead>",
+        "<tbody>",
+    ]
+    for fold_k, _ts, test_acc, _entries in fold_rows:
+        v_val = val_for(fold_k)
+        v_train = train_for(fold_k)
+        val_c = (
+            " class='best-col-val'"
+            if best_val_k == fold_k and v_val is not None
+            else ""
+        )
+        train_c = (
+            " class='best-col-train'"
+            if best_train_k == fold_k and v_train is not None
+            else ""
+        )
+        test_c = " class='best-col-test'" if best_test_k == fold_k else ""
+        lines.append("<tr>")
+        lines.append(f"<th scope='row'>{fold_k}</th>")
+        lines.append(f"<td{val_c}>{_format_metric_cell(v_val)}</td>")
+        lines.append(f"<td{train_c}>{_format_metric_cell(v_train)}</td>")
+        lines.append(f"<td{test_c}>{test_acc:.4f}</td>")
+        lines.append("</tr>")
+    lines.append("</tbody></table>")
+    return lines
 
 class LoadedFold(NamedTuple):
     fold_index: int
@@ -153,9 +270,11 @@ def _grid_cards_for_entries(entries: List[dict]) -> List[str]:
 def _write_index_html_folds(
     out_dir: Path,
     fold_rows: List[tuple[int, str, float, List[dict]]],
+    training_by_fold: dict[int, dict[str, float]],
 ) -> None:
     """
     fold_rows: (fold_index, eval_timestamp, accuracy, written entries per fold).
+    training_by_fold: from trainings/ JSON (validation + train@best val); may be empty.
     """
     style = (
         "body { font-family: sans-serif; max-width: 1200px; margin: 1em auto; padding: 0 1em; } "
@@ -169,6 +288,17 @@ def _write_index_html_folds(
         "h1 { margin-bottom: 0.25em; } .timestamp { color: #666; font-size: 14px; margin-bottom: 0.5em; } "
         ".accuracy { font-size: 16px; margin-bottom: 1em; } "
         "h2.fold-section { margin-top: 0.5em; margin-bottom: 0.75em; font-size: 1.15rem; } "
+        "h2.summary-table-heading { font-size: 1.1rem; margin-top: 0.25em; margin-bottom: 0.35em; } "
+        ".summary-table-note { color: #666; font-size: 14px; margin: 0 0 0.75em 0; } "
+        ".fold-metrics-summary { border-collapse: collapse; width: 100%; max-width: 44em; "
+        "margin-bottom: 1.25em; } "
+        ".fold-metrics-summary th, .fold-metrics-summary td { border: 1px solid #ccc; "
+        "padding: 0.35em 0.55em; text-align: left; } "
+        ".fold-metrics-summary thead th { background: #f5f5f5; font-weight: 600; } "
+        ".fold-metrics-summary tbody th { background: #fafafa; font-weight: 600; } "
+        ".best-col-val { background: rgba(46, 125, 50, 0.12); font-weight: 600; } "
+        ".best-col-train { background: rgba(21, 101, 192, 0.12); font-weight: 600; } "
+        ".best-col-test { background: rgba(245, 124, 0, 0.12); font-weight: 600; } "
         ".fold-tablist { display: flex; flex-wrap: wrap; gap: 0.35em; margin: 1em 0 0.5em 0; "
         "padding: 0; list-style: none; border-bottom: 2px solid #ddd; } "
         ".fold-tablist button { font: inherit; padding: 0.5em 1em; margin-bottom: -2px; "
@@ -181,6 +311,7 @@ def _write_index_html_folds(
         ".fold-tabpanel[hidden] { display: none !important; } "
     )
     body: List[str] = ["<h1>Evaluation report</h1>"]
+    body.extend(_summary_table_html(fold_rows, training_by_fold))
     use_tabs = len(fold_rows) > 0
 
     if use_tabs:
@@ -310,9 +441,16 @@ def main() -> None:
     dataset_name = first["dataset_name"]
     results_root_str = first.get("results_root")
     if results_root_str:
-        dataset_root = Path(results_root_str) / RESULTS_DATASETS
+        results_root_path = Path(results_root_str).resolve()
+        dataset_root = results_root_path / RESULTS_DATASETS
     else:
+        results_root_path = (
+            report_dir.parent.parent
+            if _FOLD_DIR.match(report_dir.name)
+            else report_dir.parent
+        ).resolve()
         dataset_root = Path(first["data_root"])
+    training_by_fold = load_training_metrics_by_fold(results_root_path)
 
     flat_pt = dataset_root / PYG_DATA_FILENAME
     nested_pt = dataset_root / dataset_name / PYG_DATA_FILENAME
@@ -351,6 +489,11 @@ def main() -> None:
         for lf in folds:
             log.log(f"  Results: {lf.path}")
         log.log(f"Dataset: {load_root / load_name}")
+        log.log(f"Results root (training metrics): {results_root_path}")
+        if training_by_fold:
+            log.log(f"Training metrics loaded for folds: {sorted(training_by_fold.keys())}")
+        else:
+            log.log("No training_summary.json or fold_*/training_metrics.json found.")
         log.log(f"Unique PDBs (draw graphs once): {len(pdb_union)}")
 
         for pdb_id in sorted(pdb_union):
@@ -398,7 +541,7 @@ def main() -> None:
             log.log(f"Fold {lf.fold_index}: {len(written)} sample pages")
             fold_rows.append((lf.fold_index, eval_timestamp, accuracy, written))
 
-        _write_index_html_folds(report_dir, fold_rows)
+        _write_index_html_folds(report_dir, fold_rows, training_by_fold)
         log.log(f"Index: {report_dir / 'index.html'}")
         log.log("Done.")
 

@@ -1,7 +1,8 @@
 """
 Train GNN on MPro Version 3: classification only (Category: low / medium / high potency).
 Requires a pre-built PyG dataset (run build_dataset.py first). Saves best model per fold to
-results/trainings/fold_<k>/<checkpoint_name>.
+results/trainings/fold_<k>/<checkpoint_name>, fold_<k>/training_metrics.json, and
+results/trainings/training_summary.json (aggregate over all fold_*/training_metrics.json).
 
 Usage:
   uv run python build_dataset.py --data_root /path/to/snapshot
@@ -11,6 +12,8 @@ Usage:
 """
 
 import argparse
+import json
+import re
 from pathlib import Path
 
 import torch
@@ -46,8 +49,85 @@ from mprov3_gine_explainer_defaults import (
 from loaders import create_data_loaders
 from model import MProGNN
 from train_epoch import train_one_epoch
-from utils import RunLogger, log_overwrite_dir_if_nonempty
+from utils import RunLogger, log_overwrite_dir_if_nonempty, log_overwrite_if_exists
 from validation import evaluate_validation
+
+_TRAINING_METRICS_JSON = "training_metrics.json"
+_TRAINING_SUMMARY_JSON = "training_summary.json"
+_FOLD_DIR_RE = re.compile(r"^fold_(\d+)$")
+
+
+def _write_fold_training_metrics(
+    fold_dir: Path,
+    *,
+    fold_index: int,
+    num_folds: int,
+    best_validation_accuracy: float,
+    train_accuracy_at_best_validation: float,
+    checkpoint: str,
+    log,
+) -> None:
+    path = fold_dir / _TRAINING_METRICS_JSON
+    log_overwrite_if_exists(path, log)
+    payload = {
+        "fold_index": fold_index,
+        "num_folds": num_folds,
+        "best_validation_accuracy": best_validation_accuracy,
+        "train_accuracy_at_best_validation": train_accuracy_at_best_validation,
+        "checkpoint": checkpoint,
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def scan_and_write_training_summary(trainings_root: Path, log) -> None:
+    """Load all fold_*/training_metrics.json and write trainings/training_summary.json."""
+    fold_entries: list[dict] = []
+    for child in sorted(trainings_root.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or not _FOLD_DIR_RE.match(child.name):
+            continue
+        metrics_path = child / _TRAINING_METRICS_JSON
+        if not metrics_path.is_file():
+            continue
+        data = json.loads(metrics_path.read_text(encoding="utf-8"))
+        fold_entries.append(
+            {
+                "fold_index": int(data["fold_index"]),
+                "num_folds": int(data["num_folds"]),
+                "best_validation_accuracy": float(data["best_validation_accuracy"]),
+                "train_accuracy_at_best_validation": float(
+                    data["train_accuracy_at_best_validation"]
+                ),
+                "checkpoint": str(data["checkpoint"]),
+            }
+        )
+    fold_entries.sort(key=lambda x: x["fold_index"])
+    summary_path = trainings_root / _TRAINING_SUMMARY_JSON
+    if not fold_entries:
+        log_overwrite_if_exists(summary_path, log)
+        summary_path.write_text(json.dumps({"folds": []}, indent=2), encoding="utf-8")
+        log(f"Training summary: no {_TRAINING_METRICS_JSON} under {trainings_root}; "
+            f"wrote empty {summary_path.name}")
+        return
+
+    best_val_fold = max(
+        fold_entries,
+        key=lambda f: (f["best_validation_accuracy"], -f["fold_index"]),
+    )["fold_index"]
+    best_train_fold = max(
+        fold_entries,
+        key=lambda f: (f["train_accuracy_at_best_validation"], -f["fold_index"]),
+    )["fold_index"]
+    out = {
+        "folds": fold_entries,
+        "best_validation_fold_index": best_val_fold,
+        "best_train_accuracy_fold_index": best_train_fold,
+    }
+    log_overwrite_if_exists(summary_path, log)
+    summary_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    log(
+        f"Training summary: best_validation_fold_index={best_val_fold} "
+        f"best_train_accuracy_fold_index={best_train_fold} → {summary_path}"
+    )
 
 
 def _parse_args() -> argparse.Namespace:
@@ -197,6 +277,7 @@ def main() -> None:
             ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
             best_val_acc = 0.0
+            best_train_acc_at_best_val = 0.0
             for epoch in range(1, args.epochs + 1):
                 train_loss, train_acc = train_one_epoch(
                     model,
@@ -208,6 +289,7 @@ def main() -> None:
                 val_metrics = evaluate_validation(model, val_loader, device)
                 if val_metrics.accuracy > best_val_acc:
                     best_val_acc = val_metrics.accuracy
+                    best_train_acc_at_best_val = train_acc
                     torch.save(model.state_dict(), ckpt_path)
                 if epoch % 10 == 0 or epoch == 1:
                     log.log(
@@ -217,9 +299,20 @@ def main() -> None:
                     )
             log.log(
                 f"Best validation score (accuracy): {best_val_acc:.4f}  "
+                f"train_acc@best_val={best_train_acc_at_best_val:.4f}  "
                 f"fold_index={k}  checkpoint={ckpt_path}"
             )
+            _write_fold_training_metrics(
+                ckpt_path.parent,
+                fold_index=k,
+                num_folds=args.num_folds,
+                best_validation_accuracy=best_val_acc,
+                train_accuracy_at_best_validation=best_train_acc_at_best_val,
+                checkpoint=args.checkpoint,
+                log=log.log,
+            )
 
+        scan_and_write_training_summary(out_dir, log.log)
         log.log(f"Log written to {log_path}")
 
 
