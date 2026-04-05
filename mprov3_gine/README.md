@@ -63,7 +63,7 @@ flowchart TB
     end
 
     subgraph out_viz [results/visualizations]
-        VizPNG[PNG/SVG/HTML + index.html by fold]
+        VizPNG[PNG/SVG/HTML + index by fold and split]
         VizLog[visualize.log]
     end
 
@@ -210,7 +210,7 @@ All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at
 | `results/datasets/`                          | `build_dataset.py` (`data.pt`, `pdb_order.txt`)                                            | `build.log`                                    |
 | `results/trainings/`                         | `train.py` (`best_gnn.pt`)                                                                 | `train.log`                                    |
 | `results/classifications/`                   | `evaluate.py` (`evaluation_results.json`), `create_evaluation_report.py` (HTML, `graphs/`) | `evaluate.log`, `create_evaluation_report.log` |
-| `results/visualizations/`                    | `visualize_graphs.py` (all graphs by default; PNG/SVG/HTML; `index.html` grouped by held-out test fold) | `visualize.log`                                |
+| `results/visualizations/`                    | `visualize_graphs.py` (fold → train/val/test plan; one draw per graph; `index.html` grouped by fold and split) | `visualize.log`                                |
 | `results/check_format/datasets/`             | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
 | `results/check_format/raw_data/`             | `check_raw_data_format.py` (log only)                                                      | `check_input.log`                              |
 
@@ -281,13 +281,13 @@ Log is written to `results/check_format/datasets/check_output.log`.
 
 ### 2. Visualize ligand graphs (visualize_graphs.py)
 
-Draws ligand graphs using **RDKit's 2D drawer** (MolDraw2D) for publication-quality figures. By default loads **`results/datasets/data.pt`**, draws **every graph** (order from `pdb_order.txt` when present, then any remaining rows), and writes to **`results/visualizations/`**. Split files are used to label each graph's **held-out CV test fold** for `index.html` grouping. **Category is shown in the original scale (-1, 0, 1)** (low / medium / high potency). Layout uses **(x, y) only** (z is dropped). Bond styles follow chemistry conventions: single = one central line; double = two shifted lines; triple = two shifted lines plus one central line; aromatic = dashed.
+Draws ligand graphs using **RDKit's 2D drawer** (MolDraw2D) for publication-quality figures. By default loads **`results/datasets/data.pt`** and walks **each CV fold** from raw `Splits/` with sub-order **train → val → test**, using **`pdb_order.txt`** order inside each split when present. **Each dataset graph is drawn at most once** (first time it appears in that walk); **`index.html`** still lists every planned **(fold, split)** slot, so the same PDB can show up under multiple headings as duplicate thumbnails linking to the same PNG/HTML. Writes to **`results/visualizations/`**. **Category is shown in the original scale (-1, 0, 1)** (low / medium / high potency). Layout uses **(x, y) only** (z is dropped). Bond styles follow chemistry conventions: single = one central line; double = two shifted lines; triple = two shifted lines plus one central line; aromatic = dashed.
 
 ```bash
-# Default: all graphs, output = results/visualizations/
+# Default: full plan (all folds × train/val/test), one draw per unique graph
 uv run python visualize_graphs.py
 
-# At most N graphs per test-fold bucket (including unlabeled "Other")
+# At most N index rows (and first-time draws) per (fold, train|val|test) bucket
 uv run python visualize_graphs.py --num-graphs-by-fold 32
 
 # Select by dataset indices (overrides default plan and per-fold cap)
@@ -302,7 +302,7 @@ Output under `**results/visualizations/**`:
 - `PDB_ID.png`: 2D drawing (RDKit MolDraw2D).
 - `PDB_ID.svg`: vector graphic (only with `--svg`).
 - `PDB_ID.html`: report with PDB ID, category (-1/0/1), pIC50, and tables for nodes (atomic number, x, y, z) and edges (bond type).
-- `index.html`: thumbnail index of visualized graphs, **grouped by CV test fold** (from raw `Splits/`); `visualize.log`: run log.
+- `index.html`: thumbnails **grouped by fold, then train / val / test** (from raw `Splits/`); `visualize.log`: run log.
 
 ### 3. Train (train.py)
 
@@ -509,6 +509,6 @@ print_test_report(test_metrics)
 | **train.py**                    | CLI: load `results/datasets/data.pt`, train; save to `results/trainings/` and `train.log`.                                                                                          |
 | **evaluate.py**                 | CLI: load `results/trainings/best_gnn.pt`, evaluate; save to `results/classifications/` and `evaluate.log`.                                                                          |
 | **create_evaluation_report.py** | CLI: read `results/classifications/evaluation_results.json`, write HTML report into that folder; `create_evaluation_report.log`.                                                    |
-| **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`, draw all graphs by default (optional `--num-graphs-by-fold`); write `results/visualizations/` and `visualize.log`; uses `utils` HTML helpers.   |
+| **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`.   |
 
 

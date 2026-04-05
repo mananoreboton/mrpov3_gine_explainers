@@ -14,7 +14,7 @@ Run everything from the **repository root**:
 
 1. `check_raw_data_format.py` → `build_dataset.py` → `check_PyG_data_format.py` → `visualize_graphs.py --num-graphs-by-fold 1` → `train.py` → `evaluate.py` → `create_evaluation_report.py`
 
-For **`visualize_graphs.py`**, `--num-graphs-by-fold 1` caps output to **at most one graph per held-out test-fold bucket** (fast smoke); omit the flag to draw **every** graph in `data.pt`.
+For **`visualize_graphs.py`**, `--num-graphs-by-fold 1` caps to **at most one index row (and first draw) per (fold, train|val|test) bucket** (fast smoke); omit the flag for the full split-ordered plan (**one PNG per unique PDB**).
 
 **Explainer** (always in this order):
 
