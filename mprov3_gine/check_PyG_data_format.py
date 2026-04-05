@@ -16,10 +16,12 @@ Checks performed:
   - pdb_id attribute is present (each graph is checked; OK lines default to the log file only)
 - pdb_order.txt exists and matches dataset length; ``pdb_id`` on each checked graph
   matches the corresponding line (case-insensitive)
-- Train/val/test indices derived from the split files are within dataset bounds
+- Train/val/test indices derived from the split files are within dataset bounds; the
+  log groups output **by fold**, and under each fold **by split** (train / val / test:
+  member list, then per-split range check)
 
 Use ``--verbose`` to print every per-graph OK line on stdout. Use ``--quiet`` to
-keep fold split membership listing in the log file only.
+keep fold sections (split membership and per-split checks) in the log file only.
 
 Exit code:
 - 0 if all checks pass
@@ -393,21 +395,18 @@ def _normalize_pdb_token(value: object) -> str:
     return str(value).strip().upper()
 
 
-def _split_member_preview_lines(
-    name: str,
+def _split_member_body(
     idx: torch.Tensor,
     pdb_order: Optional[List[str]],
     dataset_len: int,
     max_show: int = _FOLD_SPLIT_MEMBER_PREVIEW_MAX,
-) -> List[str]:
+) -> Tuple[int, str]:
     """
-    Lines listing graphs in one split (train/val/test) for a fold.
-
-    Uses PDB IDs from ``pdb_order`` when in range; otherwise dataset indices.
-    Sorted by index; truncated with a remainder count.
+    Member list string for one split. Returns (count, body) where body is PDB IDs
+    (or indices) comma-separated, possibly truncated.
     """
     if idx.numel() == 0:
-        return [f"  {name}: (empty — no dataset indices in this split)"]
+        return 0, "(no dataset indices in this split)"
 
     raw = sorted({int(x.item()) for x in idx.view(-1)})
     labels: List[str] = []
@@ -422,7 +421,7 @@ def _split_member_preview_lines(
         body = ", ".join(labels)
     else:
         body = ", ".join(labels[:max_show]) + f" … (+{n - max_show} more)"
-    return [f"  {name} (n={n}): {body}"]
+    return n, body
 
 
 def _check_pdb_id_alignment(
@@ -513,6 +512,7 @@ def _check_split_indices_in_range(
     dataset_pdb_order: Optional[List[str]] = None,
 ) -> Tuple[List[CheckResult], List[str]]:
     results: List[CheckResult] = []
+    lines: List[str] = []
     pdb_order = (
         dataset_pdb_order
         if dataset_pdb_order is not None
@@ -530,61 +530,57 @@ def _check_split_indices_in_range(
             dataset_pdb_order=pdb_order,
         )
     except Exception as exc:
-        results.append(
-            CheckResult(
-                False,
-                "Failed to compute train/val/test indices via get_train_val_test_indices; "
-                f"dataset or splits may be incompatible. Error: {exc}",
-            )
+        msg = (
+            "Failed to compute train/val/test indices via get_train_val_test_indices; "
+            f"dataset or splits may be incompatible. Error: {exc}"
         )
-        return results, []
+        results.append(CheckResult(False, msg))
+        lines.append(f"  [ERROR] {msg}")
+        return results, lines
 
-    preview_lines: List[str] = [
-        "  Split membership (dataset index order, PDB id when known):",
-        *_split_member_preview_lines("train", train_idx, pdb_order, dataset_len),
-        *_split_member_preview_lines("val", val_idx, pdb_order, dataset_len),
-        *_split_member_preview_lines("test", test_idx, pdb_order, dataset_len),
+    splits_spec: List[Tuple[str, torch.Tensor]] = [
+        ("train", train_idx),
+        ("val", val_idx),
+        ("test", test_idx),
     ]
 
-    failures: List[CheckResult] = []
+    for split_name, idx in splits_spec:
+        lines.append(f"  --- {split_name.upper()} ---")
+        n_mem, body = _split_member_body(idx, pdb_order, dataset_len)
+        lines.append(f"    Members (n={n_mem}, dataset index order; PDB when known): {body}")
 
-    def _check_subset(name: str, idx: torch.Tensor) -> None:
         if idx.numel() == 0:
-            failures.append(
-                CheckResult(
-                    False,
-                    f"{name} indices tensor is empty; check that splits reference "
-                    "valid PDB IDs and that corresponding graphs exist in the dataset.",
-                )
+            err = (
+                f"{split_name} indices tensor is empty; check that splits reference "
+                "valid PDB IDs and that corresponding graphs exist in the dataset."
             )
-            return
+            lines.append(f"    [ERROR] {err}")
+            results.append(CheckResult(False, err))
+            continue
+
         min_idx = int(idx.min().item())
         max_idx = int(idx.max().item())
         if min_idx < 0 or max_idx >= dataset_len:
-            failures.append(
-                CheckResult(
-                    False,
-                    f"{name} indices out of range [0, {dataset_len - 1}]: "
-                    f"min={min_idx}, max={max_idx}.",
-                )
+            err = (
+                f"{split_name} indices out of range [0, {dataset_len - 1}]: "
+                f"min={min_idx}, max={max_idx}."
             )
+            lines.append(f"    [ERROR] {err}")
+            results.append(CheckResult(False, err))
+            continue
 
-    _check_subset("train", train_idx)
-    _check_subset("val", val_idx)
-    _check_subset("test", test_idx)
-
-    if failures:
-        results.extend(failures)
-    else:
+        lines.append(
+            f"    [OK] {split_name}: {int(idx.numel())} indices, all in "
+            f"[0, {dataset_len - 1}] (min={min_idx}, max={max_idx})."
+        )
         results.append(
             CheckResult(
                 True,
-                f"split indices in range (train={int(train_idx.numel())}, "
-                f"val={int(val_idx.numel())}, test={int(test_idx.numel())}).",
+                f"{split_name}: {int(idx.numel())} indices in range.",
             )
         )
 
-    return results, preview_lines
+    return results, lines
 
 
 def run_graph_level_checks(
@@ -679,7 +675,7 @@ def run_fold_split_checks(
     dataset_len: int,
     dataset_pdb_order: Optional[List[str]],
 ) -> Tuple[bool, List[CheckResult], List[str]]:
-    """Train/val/test index range check for one fold; third value is split membership preview lines."""
+    """Train/val/test index range check for one fold; third value is structured log lines (by split)."""
     results, preview_lines = _check_split_indices_in_range(
         dataset_root=dataset_root,
         splits_root=splits_root,
@@ -795,8 +791,8 @@ def _parse_args() -> argparse.Namespace:
         "--quiet",
         action="store_true",
         help=(
-            "Write fold split membership listing to the log file only (stdout still "
-            "gets the one-line per-graph summary and any failures)."
+            "Write per-fold / per-split sections (members + index checks) to the log "
+            "file only (stdout still gets the one-line per-graph summary and any failures)."
         ),
     )
     return parser.parse_args()
@@ -909,9 +905,20 @@ def main() -> None:
             log.log(f"[{status}] {r.message}")
 
         if dataset_len is not None:
+            log.log("")
+            log.log("=" * 72)
+            log.log(
+                f"Split checks by fold (splits under {splits_root / 'Splits'}; "
+                f"{len(fold_list)} fold(s))"
+            )
+            log.log("=" * 72)
             for k in fold_list:
-                log.log(f"--- fold_index={k} ---")
-                ok_f, fold_results, fold_preview_lines = run_fold_split_checks(
+                log.log("")
+                sep = "=" * 72
+                log.log(sep)
+                log.log(f"FOLD {k}  —  train / val / test")
+                log.log(sep)
+                ok_f, _fold_results, fold_section_lines = run_fold_split_checks(
                     dataset_root=dataset_root,
                     splits_root=splits_root,
                     dataset_name=dataset_name,
@@ -923,19 +930,16 @@ def main() -> None:
                     dataset_len=dataset_len,
                     dataset_pdb_order=pdb_order,
                 )
-                for pl in fold_preview_lines:
+                for pl in fold_section_lines:
                     if args.quiet:
                         log.log_file_only(pl)
                     else:
                         log.log(pl)
-                if args.quiet and fold_preview_lines:
+                if args.quiet and fold_section_lines:
                     log.log(
-                        f"  (Fold {k} split membership listing is in the log file when using --quiet.)"
+                        f"(Fold {k}: full per-split listing is in the log file when using --quiet.)"
                     )
                 all_ok = all_ok and ok_f
-                for r in fold_results:
-                    status = "OK" if r.ok else "ERROR"
-                    log.log(f"[{status}] fold={k} {r.message}")
 
         if all_ok:
             log.log("All output-data-format checks passed.")
