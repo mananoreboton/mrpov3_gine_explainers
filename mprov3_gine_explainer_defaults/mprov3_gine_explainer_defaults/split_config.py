@@ -23,3 +23,4 @@ class SplitConfig:
     num_folds: int = DEFAULT_NUM_FOLDS
     fold_index: int = DEFAULT_FOLD_INDEX
     dataset_name: str = DEFAULT_PYG_DATASET_NAME
+    use_validation: bool = True

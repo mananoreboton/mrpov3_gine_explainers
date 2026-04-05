@@ -50,6 +50,7 @@ def create_data_loaders(
         split_config.num_folds,
         split_config.fold_index,
         dataset_pdb_order=dataset_pdb_order,
+        use_validation=split_config.use_validation,
     )
     train_dataset = Subset(dataset, train_idx.tolist())
     val_dataset = Subset(dataset, val_idx.tolist())

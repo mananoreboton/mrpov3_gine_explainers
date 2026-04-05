@@ -35,32 +35,36 @@ _TRAINING_SUMMARY_JSON = "training_summary.json"
 _TRAINING_METRICS_JSON = "training_metrics.json"
 
 
-def load_training_metrics_by_fold(results_root: Path) -> dict[int, dict[str, float]]:
+def _parse_fold_training_metrics_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Normalize one fold's training metrics (summary or training_metrics.json row)."""
+    raw_best = row.get("best_validation_accuracy")
+    best_val = None if raw_best is None else float(raw_best)
+    use_validation = bool(row.get("use_validation", best_val is not None))
+    return {
+        "use_validation": use_validation,
+        "best_validation_accuracy": best_val,
+        "train_accuracy_at_best_validation": float(
+            row["train_accuracy_at_best_validation"]
+        ),
+    }
+
+
+def load_training_metrics_by_fold(results_root: Path) -> dict[int, dict[str, Any]]:
     """Load per-fold validation / train@best-val from training_summary.json or fold_*/training_metrics.json."""
     trainings = results_root / RESULTS_TRAININGS
     summary_path = trainings / _TRAINING_SUMMARY_JSON
     if summary_path.is_file():
         data = json.loads(summary_path.read_text(encoding="utf-8"))
-        out: dict[int, dict[str, float]] = {}
+        out: dict[int, dict[str, Any]] = {}
         for f in data.get("folds", []):
             k = int(f["fold_index"])
-            out[k] = {
-                "best_validation_accuracy": float(f["best_validation_accuracy"]),
-                "train_accuracy_at_best_validation": float(
-                    f["train_accuracy_at_best_validation"]
-                ),
-            }
+            out[k] = _parse_fold_training_metrics_row(f)
         return out
-    out: dict[int, dict[str, float]] = {}
+    out: dict[int, dict[str, Any]] = {}
     for metrics_path in trainings.glob(f"fold_*/{_TRAINING_METRICS_JSON}"):
         raw = json.loads(metrics_path.read_text(encoding="utf-8"))
         k = int(raw["fold_index"])
-        out[k] = {
-            "best_validation_accuracy": float(raw["best_validation_accuracy"]),
-            "train_accuracy_at_best_validation": float(
-                raw["train_accuracy_at_best_validation"]
-            ),
-        }
+        out[k] = _parse_fold_training_metrics_row(raw)
     return out
 
 
@@ -89,7 +93,7 @@ def _format_metric_cell(value: float | None) -> str:
 
 def _summary_table_html(
     fold_rows: List[tuple[int, str, float, List[dict]]],
-    training_by_fold: dict[int, dict[str, float]],
+    training_by_fold: dict[int, dict[str, Any]],
 ) -> List[str]:
     """Build fold comparison table rows (validation, train@best val, test accuracy)."""
     fold_indices = [fr[0] for fr in fold_rows]
@@ -99,7 +103,12 @@ def _summary_table_html(
         m = training_by_fold.get(k)
         if not m:
             return None
-        return float(m["best_validation_accuracy"])
+        if not m.get("use_validation", True):
+            return None
+        v = m.get("best_validation_accuracy")
+        if v is None:
+            return None
+        return float(v)
 
     def train_for(k: int) -> float | None:
         m = training_by_fold.get(k)
@@ -270,7 +279,7 @@ def _grid_cards_for_entries(entries: List[dict]) -> List[str]:
 def _write_index_html_folds(
     out_dir: Path,
     fold_rows: List[tuple[int, str, float, List[dict]]],
-    training_by_fold: dict[int, dict[str, float]],
+    training_by_fold: dict[int, dict[str, Any]],
 ) -> None:
     """
     fold_rows: (fold_index, eval_timestamp, accuracy, written entries per fold).

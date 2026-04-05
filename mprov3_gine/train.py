@@ -15,6 +15,7 @@ import argparse
 import json
 import re
 from pathlib import Path
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -62,7 +63,8 @@ def _write_fold_training_metrics(
     *,
     fold_index: int,
     num_folds: int,
-    best_validation_accuracy: float,
+    use_validation: bool,
+    best_validation_accuracy: Optional[float],
     train_accuracy_at_best_validation: float,
     checkpoint: str,
     log,
@@ -72,6 +74,7 @@ def _write_fold_training_metrics(
     payload = {
         "fold_index": fold_index,
         "num_folds": num_folds,
+        "use_validation": use_validation,
         "best_validation_accuracy": best_validation_accuracy,
         "train_accuracy_at_best_validation": train_accuracy_at_best_validation,
         "checkpoint": checkpoint,
@@ -89,11 +92,17 @@ def scan_and_write_training_summary(trainings_root: Path, log) -> None:
         if not metrics_path.is_file():
             continue
         data = json.loads(metrics_path.read_text(encoding="utf-8"))
+        raw_best_val = data.get("best_validation_accuracy")
+        best_val: Optional[float] = (
+            None if raw_best_val is None else float(raw_best_val)
+        )
+        use_val = bool(data.get("use_validation", best_val is not None))
         fold_entries.append(
             {
                 "fold_index": int(data["fold_index"]),
                 "num_folds": int(data["num_folds"]),
-                "best_validation_accuracy": float(data["best_validation_accuracy"]),
+                "use_validation": use_val,
+                "best_validation_accuracy": best_val,
                 "train_accuracy_at_best_validation": float(
                     data["train_accuracy_at_best_validation"]
                 ),
@@ -109,10 +118,14 @@ def scan_and_write_training_summary(trainings_root: Path, log) -> None:
             f"wrote empty {summary_path.name}")
         return
 
-    best_val_fold = max(
-        fold_entries,
-        key=lambda f: (f["best_validation_accuracy"], -f["fold_index"]),
-    )["fold_index"]
+    with_val = [f for f in fold_entries if f["best_validation_accuracy"] is not None]
+    if with_val:
+        best_val_fold = max(
+            with_val,
+            key=lambda f: (f["best_validation_accuracy"], -f["fold_index"]),
+        )["fold_index"]
+    else:
+        best_val_fold = None
     best_train_fold = max(
         fold_entries,
         key=lambda f: (f["train_accuracy_at_best_validation"], -f["fold_index"]),
@@ -202,6 +215,12 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_OUT_CLASSES,
         help=f"Number of classes (Category, default: {DEFAULT_OUT_CLASSES})",
     )
+    parser.add_argument(
+        "--no_validation",
+        action="store_true",
+        help="Do not read the val split file; train without validation (checkpoint on best train acc). "
+        "Also implied when the val split resolves to zero samples.",
+    )
     return parser.parse_args()
 
 
@@ -252,10 +271,19 @@ def main() -> None:
                 num_folds=args.num_folds,
                 fold_index=k,
                 dataset_name=dataset_name,
+                use_validation=not args.no_validation,
             )
             train_loader, val_loader, _ = create_data_loaders(
                 dataset_base, data_root, split_config, batch_size=args.batch_size
             )
+            use_val = split_config.use_validation and len(val_loader.dataset) > 0
+            if not split_config.use_validation:
+                log.log("Validation disabled (--no_validation): val split file not loaded.")
+            elif not use_val:
+                log.log(
+                    "Validation split has zero samples in the built dataset; "
+                    "training without validation (checkpoint on best train accuracy)."
+                )
             log.log(
                 f"Dataset size (train/val): {len(train_loader.dataset)} train, "
                 f"{len(val_loader.dataset)} val"
@@ -276,8 +304,9 @@ def main() -> None:
             ckpt_path = training_checkpoint_path(results_root, k, args.checkpoint)
             ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
-            best_val_acc = 0.0
+            best_val_acc: Optional[float] = 0.0
             best_train_acc_at_best_val = 0.0
+            best_train_for_ckpt = -1.0
             for epoch in range(1, args.epochs + 1):
                 train_loss, train_acc = train_one_epoch(
                     model,
@@ -286,27 +315,45 @@ def main() -> None:
                     device,
                     criterion_ce,
                 )
-                val_metrics = evaluate_validation(model, val_loader, device)
-                if val_metrics.accuracy > best_val_acc:
-                    best_val_acc = val_metrics.accuracy
-                    best_train_acc_at_best_val = train_acc
-                    torch.save(model.state_dict(), ckpt_path)
-                if epoch % 10 == 0 or epoch == 1:
-                    log.log(
-                        f"Epoch {epoch:3d}  fold_index={k}  "
-                        f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
-                        f"val_acc={val_metrics.accuracy:.4f}"
-                    )
-            log.log(
-                f"Best validation score (accuracy): {best_val_acc:.4f}  "
-                f"train_acc@best_val={best_train_acc_at_best_val:.4f}  "
-                f"fold_index={k}  checkpoint={ckpt_path}"
-            )
+                if use_val:
+                    val_metrics = evaluate_validation(model, val_loader, device)
+                    if val_metrics.accuracy > best_val_acc:
+                        best_val_acc = val_metrics.accuracy
+                        best_train_acc_at_best_val = train_acc
+                        torch.save(model.state_dict(), ckpt_path)
+                    if epoch % 10 == 0 or epoch == 1:
+                        log.log(
+                            f"Epoch {epoch:3d}  fold_index={k}  "
+                            f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}  "
+                            f"val_acc={val_metrics.accuracy:.4f}"
+                        )
+                else:
+                    if train_acc > best_train_for_ckpt:
+                        best_train_for_ckpt = train_acc
+                        best_train_acc_at_best_val = train_acc
+                        torch.save(model.state_dict(), ckpt_path)
+                    if epoch % 10 == 0 or epoch == 1:
+                        log.log(
+                            f"Epoch {epoch:3d}  fold_index={k}  "
+                            f"train_loss={train_loss:.4f}  train_acc={train_acc:.4f}"
+                        )
+            if use_val:
+                log.log(
+                    f"Best validation score (accuracy): {best_val_acc:.4f}  "
+                    f"train_acc@best_val={best_train_acc_at_best_val:.4f}  "
+                    f"fold_index={k}  checkpoint={ckpt_path}"
+                )
+            else:
+                log.log(
+                    f"Best train accuracy (no validation): {best_train_for_ckpt:.4f}  "
+                    f"fold_index={k}  checkpoint={ckpt_path}"
+                )
             _write_fold_training_metrics(
                 ckpt_path.parent,
                 fold_index=k,
                 num_folds=args.num_folds,
-                best_validation_accuracy=best_val_acc,
+                use_validation=use_val,
+                best_validation_accuracy=best_val_acc if use_val else None,
                 train_accuracy_at_best_validation=best_train_acc_at_best_val,
                 checkpoint=args.checkpoint,
                 log=log.log,
