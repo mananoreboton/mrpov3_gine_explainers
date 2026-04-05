@@ -37,8 +37,8 @@ run_gine_py build_dataset.py
 echo "==> check_PyG_data_format.py (fold_index=$fold)"
 run_gine_py check_PyG_data_format.py --num_folds "$nf" --fold_index "$fold"
 
-echo "==> visualize_graphs.py --num_graphs 1"
-run_gine_py visualize_graphs.py --num_graphs 1
+echo "==> visualize_graphs.py --num-graphs-by-fold 1"
+run_gine_py visualize_graphs.py --num-graphs-by-fold 1
 
 echo "==> train.py (fold_index=$fold, epochs=${GNN_TRAIN_EPOCHS:-1})"
 run_gine_py train.py --num_folds "$nf" --fold_index "$fold" --epochs "${GNN_TRAIN_EPOCHS:-1}"

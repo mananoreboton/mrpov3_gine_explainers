@@ -1,10 +1,12 @@
 """
 Visualize ligand graphs from a built PyG dataset (data.pt).
 
-By default draws every graph in **test-fold order**: fold 0 test set (in pdb_order
-order), then fold 1 test set, and so on for all folds. Optional ``--fold_indices``
-restricts which folds contribute test-set graphs; ``--sample_size`` (alias
-``--num_graphs``) caps how many graphs are drawn after that ordering.
+By default draws **every graph** in the dataset. Order follows ``pdb_order.txt`` when
+present (then any dataset rows not listed there), otherwise indices ``0 .. N-1``.
+Split files supply each PDB's **held-out test fold** for ``index.html`` grouping only.
+Optional ``--fold_index`` / ``--fold_indices`` restrict to graphs whose test fold is in
+that set. Optional ``--num-graphs-by-fold`` keeps at most N graphs per fold bucket
+(including the unlabeled "Other" bucket).
 
 Uses RDKit's 2D drawer (MolDraw2D) for publication-quality graphics. For each
 selected graph this script:
@@ -14,18 +16,19 @@ selected graph this script:
 - Bond styles: single = one central line; double = two shifted lines;
   triple = two shifted + central; aromatic = dashed.
 - Saves PNG and SVG under results/visualizations/; writes HTML reports with tables.
+- ``index.html`` groups thumbnails by CV test fold (section per fold).
 
 Usage (examples):
     uv run python visualize_graphs.py
-    uv run python visualize_graphs.py --sample_size 16
-    uv run python visualize_graphs.py --fold_indices 0 1 --sample_size 8
-    uv run python visualize_graphs.py --pdb_ids 5R83 6LU7
+    uv run python visualize_graphs.py --num-graphs-by-fold 4
+    uv run python visualize_graphs.py --fold_indices 0 1 --num-graphs-by-fold 8
     uv run python visualize_graphs.py --indices 0 1 2 3
 """
 
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -119,47 +122,79 @@ def _unique_undirected_edges(
     return [(u, v, s) for (u, v), s in seen.items()]
 
 
-def ordered_indices_by_fold(
-    pdb_order: Sequence[str],
+def _pdb_id_to_test_fold(
     splits_root: Path,
     train_file: str,
     val_file: str,
     test_file: str,
     num_folds: int,
-    fold_index: Optional[int],
-    fold_indices_arg: Optional[Sequence[int]],
+) -> dict[str, int]:
+    """Map PDB ID → CV fold index where that structure is in the **test** split."""
+    splits = load_splits(splits_root, train_file, val_file, test_file, num_folds)
+    out: dict[str, int] = {}
+    for k in range(num_folds):
+        for pdb in splits[k][2]:
+            out[pdb] = k
+    return out
+
+
+def plan_all_graphs_with_test_fold(
+    ds: MProV3Dataset,
+    pdb_order: Optional[Sequence[str]],
+    pdb_to_test_fold: dict[str, int],
+    *,
+    restrict_to_fold_indices: Optional[Sequence[int]],
 ) -> List[Tuple[int, Optional[int]]]:
     """
-    Dataset indices in CV test-fold order: for each selected fold (in fold-list order),
-    append that fold's test PDBs in ``pdb_order`` order (each graph at most once).
+    One entry per dataset graph: index + optional held-out test fold (for HTML grouping).
 
-    If every fold ``0..num_folds-1`` is selected, any dataset row not in any test set is
-    appended last with ``test_fold=None`` (subset or ordering edge cases).
+    Order: ``pdb_order`` first when provided (deduplicated by index), then remaining
+    indices in ascending order. Fold labels come from ``pdb_to_test_fold``; missing PDBs
+    get ``test_fold=None``.
+
+    If ``restrict_to_fold_indices`` is set, keep only graphs whose ``test_fold`` is in
+    that set (excludes unlabeled rows).
     """
-    fold_list = resolve_fold_indices(
-        num_folds,
-        fold_index=fold_index,
-        fold_indices=list(fold_indices_arg) if fold_indices_arg is not None else None,
-    )
-    splits = load_splits(splits_root, train_file, val_file, test_file, num_folds)
-    pdb_to_idx = {p: i for i, p in enumerate(pdb_order)}
+    n = len(ds)
     seen: set[int] = set()
-    ordered: List[Tuple[int, Optional[int]]] = []
-    for k in fold_list:
-        test_ids = set(splits[k][2])
+    plan: List[Tuple[int, Optional[int]]] = []
+
+    if pdb_order is not None:
+        pdb_to_idx = {p: i for i, p in enumerate(pdb_order)}
         for pdb in pdb_order:
-            if pdb not in test_ids:
-                continue
             idx = pdb_to_idx.get(pdb)
-            if idx is None or idx in seen:
+            if idx is None or not (0 <= idx < n) or idx in seen:
                 continue
             seen.add(idx)
-            ordered.append((idx, k))
-    if set(fold_list) == set(range(num_folds)):
-        for i, _pdb in enumerate(pdb_order):
+            plan.append((idx, pdb_to_test_fold.get(pdb)))
+        for i in range(n):
             if i not in seen:
-                ordered.append((i, None))
-    return ordered
+                pid = str(getattr(ds[i], "pdb_id", "") or "")
+                plan.append((i, pdb_to_test_fold.get(pid) if pid else None))
+    else:
+        for i in range(n):
+            pid = str(getattr(ds[i], "pdb_id", "") or "")
+            plan.append((i, pdb_to_test_fold.get(pid) if pid else None))
+
+    if restrict_to_fold_indices is not None:
+        allowed = set(int(x) for x in restrict_to_fold_indices)
+        plan = [(i, f) for (i, f) in plan if f is not None and f in allowed]
+    return plan
+
+
+def apply_per_fold_cap(
+    plan: List[Tuple[int, Optional[int]]],
+    cap: int,
+) -> List[Tuple[int, Optional[int]]]:
+    """Keep at most ``cap`` entries per ``test_fold`` key (including ``None``), plan order."""
+    counts: dict[Optional[int], int] = defaultdict(int)
+    out: List[Tuple[int, Optional[int]]] = []
+    for item in plan:
+        f = item[1]
+        if counts[f] < cap:
+            counts[f] += 1
+            out.append(item)
+    return out
 
 
 def _mol_from_graph(
@@ -355,8 +390,10 @@ def write_index_html(
     """
     Write an index.html page with thumbnail links to all generated graph reports.
 
+    Graphs are grouped by ``test_fold`` (CV fold whose test set contained the graph).
+    Folds appear in ascending order; entries with unknown fold (``None``) appear last.
+
     entries: list of (pdb_id, category, pIC50, test_fold) for each graph in this run.
-    ``test_fold`` is the CV fold whose test set contained this graph, if known.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     style = (
@@ -368,73 +405,77 @@ def write_index_html(
         ".card .label { padding: 0.5em; font-size: 14px; } "
         ".card .meta { font-size: 12px; color: #666; } "
         "h1 { margin-bottom: 0.5em; } "
+        "h2.fold-section { margin-top: 1.75em; margin-bottom: 0.75em; padding-bottom: 0.25em; "
+        "border-bottom: 1px solid #ddd; font-size: 1.25rem; } "
+        "h2.fold-section:first-of-type { margin-top: 0.5em; } "
         ".timestamp { color: #666; font-size: 14px; margin-bottom: 1em; }"
     )
+    by_fold: dict[Optional[int], List[Tuple[str, Optional[int], Optional[float], Optional[int]]]] = (
+        defaultdict(list)
+    )
+    for e in entries:
+        by_fold[e[3]].append(e)
+
+    fold_order: List[Optional[int]] = sorted(k for k in by_fold if k is not None)
+    if None in by_fold:
+        fold_order.append(None)
+
     body: List[str] = [
         "<h1>MPro ligand graphs</h1>",
         f"<p class='timestamp'>Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} — {len(entries)} graphs</p>",
-        "<div class='grid'>",
     ]
-    for pdb_id, category, pIC50, test_fold in entries:
-        safe_id = html_escape(pdb_id)
-        img_src = html_escape(f"{pdb_id}.png")
-        report_href = html_escape(f"{pdb_id}.html")
-        meta_parts = []
-        if test_fold is not None:
-            meta_parts.append(f"Fold {test_fold} test")
-        if category is not None:
-            meta_parts.append(f"Cat. {category}")
-        if pIC50 is not None:
-            meta_parts.append(f"pIC50 {pIC50:.2f}")
-        meta_str = html_escape(" · ".join(meta_parts)) if meta_parts else ""
-        body.append("<div class='card'>")
-        body.append(f"  <a href='{report_href}'>")
-        body.append(f"    <img src='{img_src}' alt='{safe_id}' loading='lazy' />")
-        body.append(f"    <span class='label'>{safe_id}</span>")
-        if meta_str:
-            body.append(f"    <span class='meta'>{meta_str}</span>")
-        body.append("  </a>")
+
+    for fold in fold_order:
+        fold_entries = by_fold[fold]
+        if fold is None:
+            body.append(
+                f"<h2 class='fold-section'>Other ({len(fold_entries)} graphs)</h2>"
+                "<p class='meta' style='margin: -0.5em 0 1em 0;'>"
+                "No test-fold label (e.g. explicit --indices, or PDB not in any test split).</p>"
+            )
+        else:
+            body.append(f"<h2 class='fold-section'>Fold {fold} — test set ({len(fold_entries)} graphs)</h2>")
+        body.append("<div class='grid'>")
+        for pdb_id, category, pIC50, _test_fold in fold_entries:
+            safe_id = html_escape(pdb_id)
+            img_src = html_escape(f"{pdb_id}.png")
+            report_href = html_escape(f"{pdb_id}.html")
+            meta_parts = []
+            if category is not None:
+                meta_parts.append(f"Cat. {category}")
+            if pIC50 is not None:
+                meta_parts.append(f"pIC50 {pIC50:.2f}")
+            meta_str = html_escape(" · ".join(meta_parts)) if meta_parts else ""
+            body.append("<div class='card'>")
+            body.append(f"  <a href='{report_href}'>")
+            body.append(f"    <img src='{img_src}' alt='{safe_id}' loading='lazy' />")
+            body.append(f"    <span class='label'>{safe_id}</span>")
+            if meta_str:
+                body.append(f"    <span class='meta'>{meta_str}</span>")
+            body.append("  </a>")
+            body.append("</div>")
         body.append("</div>")
-    body.append("</div>")
+
     html = html_document("MPro ligand graphs — index", body, style=style)
     (out_dir / "index.html").write_text(html, encoding="utf-8")
 
 
-def _explicit_index_plan(
+def _indices_plan(
     ds: MProV3Dataset,
-    pdb_order: Optional[Sequence[str]],
     indices: Optional[Sequence[int]],
-    pdb_ids: Optional[Sequence[str]],
 ) -> Optional[List[Tuple[int, Optional[int]]]]:
-    """
-    If ``--indices`` or ``--pdb_ids`` is used, return (idx, None) pairs; else ``None``
-    (caller should use fold ordering).
-    """
+    """If ``--indices`` is used, return ``(idx, None)`` pairs; else ``None``."""
+    if not indices:
+        return None
     n = len(ds)
-    if indices:
-        return [(i, None) for i in indices if 0 <= i < n]
-
-    if pdb_ids:
-        if pdb_order is None:
-            raise ValueError(
-                "pdb_ids were provided but pdb_order.txt is missing. "
-                "Please ensure the dataset was built with build_dataset.py."
-            )
-        mapping = {p: idx for idx, p in enumerate(pdb_order)}
-        result: List[Tuple[int, Optional[int]]] = []
-        for p in pdb_ids:
-            if p in mapping:
-                result.append((mapping[p], None))
-        return result
-
-    return None
+    return [(i, None) for i in indices if 0 <= i < n]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Draw a subset of ligand graphs from a built PyG dataset (data.pt) and "
-            "save images plus HTML reports to results/visualizations/."
+            "Draw ligand graphs from a built PyG dataset (data.pt) and save images plus "
+            "HTML reports under results/visualizations/."
         )
     )
     parser.add_argument(
@@ -444,15 +485,15 @@ def parse_args() -> argparse.Namespace:
         help=f"Root for outputs (default: {DEFAULT_RESULTS_ROOT}); uses latest results_root/datasets/<timestamp>/, writes to results_root/visualizations/<timestamp>/.",
     )
     parser.add_argument(
-        "--sample_size",
-        "--num_graphs",
+        "--num-graphs-by-fold",
         type=int,
         default=None,
-        dest="sample_size",
+        dest="num_graphs_by_fold",
         metavar="N",
         help=(
-            "When --indices/--pdb_ids are not used, draw at most the first N graphs "
-            "after test-fold ordering (default: all graphs)."
+            "After building the default plan, keep at most N graphs per held-out test-fold "
+            "bucket (including unlabeled 'Other'). Ignored when --indices is set. "
+            "Default: draw all graphs."
         ),
     )
     parser.add_argument(
@@ -472,7 +513,7 @@ def parse_args() -> argparse.Namespace:
         "--fold_index",
         type=int,
         default=None,
-        help="Only include test-set graphs from this fold (with default fold ordering).",
+        help="Restrict to graphs whose held-out CV test fold is this index.",
     )
     fold_group.add_argument(
         "--fold_indices",
@@ -480,7 +521,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=None,
         metavar="K",
-        help="Only include test-set graphs from these folds (order matches this list).",
+        help="Restrict to graphs whose held-out CV test fold is one of these indices.",
     )
     parser.add_argument(
         "--train_split_file",
@@ -505,14 +546,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         nargs="+",
         default=None,
-        help="Explicit dataset indices to visualize (overrides fold ordering and --sample_size).",
-    )
-    parser.add_argument(
-        "--pdb_ids",
-        type=str,
-        nargs="+",
-        default=None,
-        help="PDB IDs to visualize (requires pdb_order.txt built by build_dataset.py).",
+        help="Explicit dataset indices to visualize (overrides default plan, fold filter, and --num-graphs-by-fold).",
     )
     parser.add_argument(
         "--svg",
@@ -533,30 +567,35 @@ def main() -> None:
     pdb_order = load_dataset_pdb_order(dataset_base, dataset_name)
 
     splits_root = Path(args.splits_root or DEFAULT_DATA_ROOT)
-    plan = _explicit_index_plan(
-        ds=ds,
-        pdb_order=pdb_order,
-        indices=args.indices,
-        pdb_ids=args.pdb_ids,
-    )
+    plan = _indices_plan(ds=ds, indices=args.indices)
     if plan is None:
-        if pdb_order is None:
-            raise ValueError(
-                "Fold ordering requires pdb_order.txt from build_dataset.py. "
-                "Use --indices or --pdb_ids to select graphs without splits."
-            )
-        plan = ordered_indices_by_fold(
-            pdb_order=pdb_order,
-            splits_root=splits_root,
-            train_file=args.train_split_file,
-            val_file=args.val_split_file,
-            test_file=args.test_split_file,
-            num_folds=args.num_folds,
-            fold_index=args.fold_index,
-            fold_indices_arg=args.fold_indices,
+        explicit_fold_filter = (
+            args.fold_index is not None or args.fold_indices is not None
         )
-    if args.sample_size is not None:
-        plan = plan[: args.sample_size]
+        restrict: Optional[List[int]] = None
+        if explicit_fold_filter:
+            restrict = resolve_fold_indices(
+                args.num_folds,
+                fold_index=args.fold_index,
+                fold_indices=list(args.fold_indices)
+                if args.fold_indices is not None
+                else None,
+            )
+        pdb_to_test_fold = _pdb_id_to_test_fold(
+            splits_root,
+            args.train_split_file,
+            args.val_split_file,
+            args.test_split_file,
+            args.num_folds,
+        )
+        plan = plan_all_graphs_with_test_fold(
+            ds,
+            pdb_order,
+            pdb_to_test_fold,
+            restrict_to_fold_indices=restrict,
+        )
+        if args.num_graphs_by_fold is not None:
+            plan = apply_per_fold_cap(plan, args.num_graphs_by_fold)
 
     output_dir = results_root / RESULTS_VISUALIZATIONS
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -571,7 +610,8 @@ def main() -> None:
         log.log(
             f"Loaded {len(ds)} graphs; writing {len(plan)} graphs "
             f"(splits_root={splits_root}, fold_index={args.fold_index}, "
-            f"fold_indices={args.fold_indices}, sample_size={args.sample_size})"
+            f"fold_indices={args.fold_indices}, "
+            f"num_graphs_by_fold={args.num_graphs_by_fold}, indices={args.indices})"
         )
 
         for idx, test_fold in plan:

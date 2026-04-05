@@ -44,6 +44,8 @@ Model and split args (e.g. `--fold_index`, `--hidden`, `--num_layers`) must matc
     - `num_graphs`, `num_valid`, `explainer`, and `per_graph` entries with the per-graph counterparts.
   - `masks/&lt;pdb_id&gt;.json` – per-graph `edge_index` and preprocessed `edge_mask` and/or `node_mask` (depending on the explainer).
 
+The JSON field **`num_graphs`** counts graphs processed in that explainer run. It is **not** the same as **`mprov3_gine/visualize_graphs.py`** or its **`--num-graphs-by-fold`** option (ligand structure previews before training).
+
 ## Available explainers (registry)
 
 Default **`--explainers`** (or no flag) runs all of:

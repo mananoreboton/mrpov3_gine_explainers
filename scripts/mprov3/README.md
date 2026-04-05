@@ -12,7 +12,9 @@ Run everything from the **repository root**:
 
 **GINE** (per fold, when applicable):
 
-1. `check_raw_data_format.py` → `build_dataset.py` → `check_PyG_data_format.py` → `visualize_graphs.py --num_graphs 1` → `train.py` → `evaluate.py` → `create_evaluation_report.py`
+1. `check_raw_data_format.py` → `build_dataset.py` → `check_PyG_data_format.py` → `visualize_graphs.py --num-graphs-by-fold 1` → `train.py` → `evaluate.py` → `create_evaluation_report.py`
+
+For **`visualize_graphs.py`**, `--num-graphs-by-fold 1` caps output to **at most one graph per held-out test-fold bucket** (fast smoke); omit the flag to draw **every** graph in `data.pt`.
 
 **Explainer** (always in this order):
 

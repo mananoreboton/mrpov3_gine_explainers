@@ -149,8 +149,8 @@ run_uv_python "$GNN_DIR" "§1 build_dataset.py" build_dataset.py
 section "3. mprov3_gine — §1.1 check_PyG_data_format.py (fold 0)"
 run_uv_python "$GNN_DIR" "§1.1 check_PyG_data_format.py" check_PyG_data_format.py --fold_index 0
 
-section "3. mprov3_gine — §2 visualize_graphs.py --num_graphs 1"
-run_uv_python "$GNN_DIR" "§2 visualize_graphs.py" visualize_graphs.py --num_graphs 1
+section "3. mprov3_gine — §2 visualize_graphs.py --num-graphs-by-fold 1"
+run_uv_python "$GNN_DIR" "§2 visualize_graphs.py" visualize_graphs.py --num-graphs-by-fold 1
 
 section "3. mprov3_gine — §3 train.py (epochs=$GNN_TRAIN_EPOCHS, fold 0)"
 run_uv_python "$GNN_DIR" "§3 train.py" train.py --epochs "$GNN_TRAIN_EPOCHS" --fold_index 0
