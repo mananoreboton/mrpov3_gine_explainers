@@ -243,116 +243,118 @@ Requires: PyTorch, PyTorch Geometric, RDKit, pandas, numpy, scikit-learn.
 
 ## Usage
 
-### 0. Validate raw input (optional but recommended)
+### Pipeline at a glance
 
-Before building the dataset, you can check that your raw MPro snapshot has the expected layout and that SDFs/labels/splits parse correctly. The **built** PyG dataset is validated later (after step 1).
+1. **Check raw data** (optional): confirm the snapshot layout, SDFs, labels, and split files parse. Log under `results/check_format/raw_data/`.
+2. **Build dataset**: turn ligand SDFs and `Info.csv` into `results/datasets/data.pt` and `pdb_order.txt`.
+3. **Check PyG data** (optional): confirm the built graphs line up with split indices. Log under `results/check_format/datasets/`.
+4. **Visualize** (optional): 2D graph drawings and HTML pages under `results/visualizations/`.
+5. **Train**: cross-validation training; checkpoints and metrics under `results/trainings/`.
+6. **Evaluate**: test-set predictions and JSON under `results/classifications/` (same folds and model shape as training).
+7. **Report** (optional): HTML summary and thumbnails from evaluation outputs.
+
+Exact paths and overwrite behavior are fixed under `results/` (see **Results layout** above).
+
+### 0. Validate raw input (`check_raw_data_format.py`)
+
+**What it does:** Walks the raw MPro tree (`Info.csv`, `Ligand/`, `Splits/`) and checks that files match what `build_dataset.py` expects. On failure, exits non-zero and prints `[ERROR]` lines.
+
+**CLI parameters**
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--data_root` | Root of the raw snapshot | `DEFAULT_DATA_ROOT` from `mprov3_gine_explainer_defaults` |
+| `--train_split_file` | Filename under `data_root/Splits/` | `DEFAULT_TRAIN_SPLIT_FILE` |
+| `--val_split_file` | Same | `DEFAULT_VAL_SPLIT_FILE` |
+| `--test_split_file` | Same | `DEFAULT_TEST_SPLIT_FILE` |
+| `--num_folds` | Folds expected in each split file | `5` |
+
+**Examples**
 
 ```bash
-# Default data_root = config.DEFAULT_DATA_ROOT
 uv run python check_raw_data_format.py
-
-# Custom raw data path
 uv run python check_raw_data_format.py --data_root /path/to/mprov3_data
 ```
 
-If the check fails, the script exits with code 1 and prints `[ERROR]` lines. Log is written to `results/check_format/raw_data/check_input.log`.
+### 1. Build the PyG dataset (`build_dataset.py`)
 
-### 1. Build the PyG dataset (required once)
+**What it does:** Reads every ligand SDF and labels from `Info.csv`, builds one PyG graph per structure, and saves `data.pt` plus `pdb_order.txt` under `results/datasets/`. Training fails fast if this step was skipped.
 
-Train/val/test loaders use a **pre-built** PyG dataset. Create it from SDFs and `Info.csv` before training. Output is written to **`results/datasets/`** (overwrites `data.pt` / `pdb_order.txt` after an info line if they exist).
+**CLI parameters**
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--data_root` | Raw snapshot (`Ligand/`, `Info.csv`) | `DEFAULT_DATA_ROOT` |
+| `--results_root` | Parent of `datasets/` output | `DEFAULT_RESULTS_ROOT` |
+
+**Examples**
 
 ```bash
-# Default: data_root = config.DEFAULT_DATA_ROOT, output = results/datasets/
 uv run python build_dataset.py
-
-# Custom raw data path and results root
 uv run python build_dataset.py --data_root /path/to/mprov3_data --results_root results
 ```
 
-Output: `results/datasets/data.pt`, `pdb_order.txt`, `build.log`. If you skip this step, training will exit with an error telling you to run `build_dataset.py` first.
+#### 1.1. Validate built dataset (`check_PyG_data_format.py`)
 
-#### 1.1. Validate built dataset (optional)
+**What it does:** Loads `data.pt`, maps split PDB IDs to dataset indices, and checks label ranges and graph fields so training/evaluation will not hit silent mismatches.
 
-After building, you can verify that the PyG dataset and split indices are compatible with training/evaluation. By default this uses **`results/datasets/data.pt`** and `--splits_root` for the raw snapshot (Splits/).
+**CLI parameters:** `--data_root` (folder containing `data.pt`, default flat `results/datasets/`), `--splits_root` (raw snapshot for `Splits/`), split filenames, `--num_folds`, `--fold_index` or `--fold_indices`, `--num_classes`, `--max_samples`, `--verbose`, `--quiet`. See `uv run python check_PyG_data_format.py --help`.
+
+**Examples**
 
 ```bash
-# Default: results/datasets/, splits from config.DEFAULT_DATA_ROOT
 uv run python check_PyG_data_format.py
-
-# Custom splits location (raw MPro snapshot)
 uv run python check_PyG_data_format.py --splits_root /path/to/mprov3_data
 ```
 
-Log is written to `results/check_format/datasets/check_output.log`.
+### 2. Visualize ligand graphs (`visualize_graphs.py`)
 
-### 2. Visualize ligand graphs (visualize_graphs.py)
+**What it does:** Draws each ligand with RDKit’s 2D drawer, using the built `data.pt` and the same CV plan as training (folds × train → val → test). Each graph file is written at most once; `index.html` can still list the same PDB under multiple fold/split headings. Categories use the original scale (-1, 0, 1); coordinates use x and y only for layout.
 
-Draws ligand graphs using **RDKit's 2D drawer** (MolDraw2D) for publication-quality figures. By default loads **`results/datasets/data.pt`** and walks **each CV fold** from raw `Splits/` with sub-order **train → val → test**, using **`pdb_order.txt`** order inside each split when present. **Each dataset graph is drawn at most once** (first time it appears in that walk); **`index.html`** still lists every planned **(fold, split)** slot, so the same PDB can show up under multiple headings as duplicate thumbnails linking to the same PNG/HTML. Writes to **`results/visualizations/`**. **Category is shown in the original scale (-1, 0, 1)** (low / medium / high potency). Layout uses **(x, y) only** (z is dropped). Bond styles follow chemistry conventions: single = one central line; double = two shifted lines; triple = two shifted lines plus one central line; aromatic = dashed.
+**CLI parameters:** `--results_root`, `--splits_root`, `--num_folds`, `--fold_index` or `--fold_indices`, split filenames, `--num-graphs-by-fold`, `--indices` (overrides plan), `--svg`. See `uv run python visualize_graphs.py --help`.
+
+**Examples**
 
 ```bash
-# Default: full plan (all folds × train/val/test), one draw per unique graph
 uv run python visualize_graphs.py
-
-# At most N index rows (and first-time draws) per (fold, train|val|test) bucket
-uv run python visualize_graphs.py --num-graphs-by-fold 32
-
-# Select by dataset indices (overrides default plan and per-fold cap)
-uv run python visualize_graphs.py --indices 0 1 2 10 25
-
-# Also write vector SVG files (for figures)
-uv run python visualize_graphs.py --svg
+uv run python visualize_graphs.py --num-graphs-by-fold 32 --svg
 ```
 
-Output under `**results/visualizations/**`:
+Outputs: `PDB_ID.png` (and optional `.svg`), `PDB_ID.html`, `index.html`, `visualize.log` under `results/visualizations/`.
 
-- `PDB_ID.png`: 2D drawing (RDKit MolDraw2D).
-- `PDB_ID.svg`: vector graphic (only with `--svg`).
-- `PDB_ID.html`: report with PDB ID, category (-1/0/1), pIC50, and tables for nodes (atomic number, x, y, z) and edges (bond type).
-- `index.html`: **one tab per CV fold**, then train / val / test grids (from raw `Splits/`); `visualize.log`: run log.
+### 3. Train (`train.py`)
 
-### 3. Train (train.py)
+**What it does:** For each selected fold, loads train/val loaders from `results/datasets/data.pt` and split files under `data_root/Splits/`, trains `MProGNN` with cross-entropy, and saves the best checkpoint (by validation accuracy when validation is enabled, else best train accuracy). Writes `fold_<k>/training_metrics.json` and, after all folds, `training_summary.json` with best-fold indices (tie-break: lower fold index). Does not evaluate the test split.
 
-Training loads **`results/datasets/data.pt`** and reads splits from **three files** in `data_root/Splits/`:
+Split files list PDB IDs per fold; defaults are `train_index_folder.txt`, `valid_index_folder.txt`, `test_index_folder.txt` with `num_folds` lists per file (default 5 folds).
 
-- **Default file names**: `train_index_folder.txt`, `valid_index_folder.txt`, `test_index_folder.txt`
-- Each file must contain **num_folds** lists of PDB IDs (one list per fold). Default **num_folds** is **5**.
+**CLI parameters**
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--data_root` | Raw snapshot (`Splits/`, `Info.csv`) | `DEFAULT_DATA_ROOT` |
+| `--results_root` | Reads `results/datasets/`, writes `results/trainings/` | `DEFAULT_RESULTS_ROOT` |
+| `--train_split_file`, `--val_split_file`, `--test_split_file` | Names under `Splits/` | `DEFAULT_*_SPLIT_FILE` |
+| `--num_folds` | CV fold count | `DEFAULT_NUM_FOLDS` |
+| `--fold_index` | Single fold (mutually exclusive with next) | all folds |
+| `--fold_indices` | Subset of folds | all folds |
+| `--checkpoint` | Filename under each `trainings/fold_<k>/` | `DEFAULT_TRAINING_CHECKPOINT_FILENAME` |
+| `--epochs` | Training epochs | `DEFAULT_TRAINING_EPOCHS` |
+| `--batch_size` | Loader batch size | `DEFAULT_BATCH_SIZE` |
+| `--lr` | Adam learning rate | `DEFAULT_TRAINING_LR` |
+| `--hidden`, `--num_layers`, `--dropout` | GINE width, depth, dropout | `DEFAULT_HIDDEN_CHANNELS`, `DEFAULT_NUM_LAYERS`, `DEFAULT_DROPOUT` |
+| `--num_classes` | Output classes (Category) | `DEFAULT_OUT_CLASSES` |
+| `--seed` | Torch manual seed | `DEFAULT_SEED` |
+| `--no_validation` | Skip val split; checkpoint on train acc | off |
+
+**Examples**
 
 ```bash
-# Default: data_root = config.DEFAULT_DATA_ROOT, output = results/trainings/
 uv run python train.py
-
-# Custom raw data path (for Splits/)
-uv run python train.py --data_root /path/to/mprov3_data
+uv run python train.py --data_root /path/to/mprov3_data --fold_index 0
 ```
 
-#### Split files and folds
-
-```bash
-# Override split file names
-uv run python train.py --train_split_file train_index_folder.txt --val_split_file valid_index_folder.txt --test_split_file test_index_folder.txt
-
-# Number of folds (default: 5) and which fold to use (0 .. num_folds-1)
-uv run python train.py --num_folds 5 --fold_index 2
-```
-
-#### Training options
-
-```bash
-# Epochs, batch size, learning rate, seed
-uv run python train.py --epochs 150 --batch_size 16 --lr 5e-4 --seed 42
-
-# Number of classes (default 3)
-uv run python train.py --num_classes 3
-```
-
-#### GINE model (architecture)
-
-```bash
-# Hidden size, depth, dropout
-uv run python train.py --hidden 128 --num_layers 4 --dropout 0.2
-```
-
-#### Full example
+**Full example**
 
 ```bash
 uv run python build_dataset.py --data_root /path/to/mprov3_data
@@ -364,49 +366,49 @@ uv run python train.py \
   --num_classes 3 --seed 42
 ```
 
-For each fold, the best model (by validation accuracy) is saved as **`results/trainings/fold_<k>/<checkpoint>`** (default checkpoint name: `best_gnn.pt`). After each fold, **`results/trainings/fold_<k>/training_metrics.json`** records that fold’s best validation accuracy and the **training accuracy at the same epoch** (when validation was best). After the run, **`results/trainings/training_summary.json`** aggregates every `fold_*/training_metrics.json` under `trainings/` and includes **`best_validation_fold_index`** and **`best_train_accuracy_fold_index`** (tie-break: lower fold index). Training does not run the test split; use `evaluate.py` for that.
+### 4. Evaluate (`evaluate.py`)
 
-### 4. Evaluate (evaluate.py) — run independently
+**What it does:** Loads `results/trainings/fold_<k>/<checkpoint>` (or legacy flat layout for fold 0), rebuilds the test loader for the same fold and splits, runs inference, and writes `fold_<k>/evaluation_results.json` with per-PDB labels in the original category scale (-1, 0, 1). Then refreshes `classification_summary.json` from every `fold_*/evaluation_results.json` (best test fold, tie-break lower index).
 
-Evaluate a saved checkpoint on the test set without running training. Uses **`results/trainings/fold_<k>/best_gnn.pt`** (or legacy flat trainings for fold 0) and **`results/datasets/data.pt`**. Use the same split/fold and model architecture as when the model was trained. **Categories are reported in the original scale (-1, 0, 1)** (low / medium / high potency). Results are saved under **`results/classifications/fold_<k>/evaluation_results.json`** for use by the evaluation report script.
+**CLI parameters**
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--data_root` | Raw snapshot (`Splits/`) | `DEFAULT_DATA_ROOT` |
+| `--results_root` | Reads trainings + datasets, writes `classifications/` | `DEFAULT_RESULTS_ROOT` |
+| `--checkpoint` | Checkpoint filename under each `trainings/fold_<k>/` | `DEFAULT_TRAINING_CHECKPOINT_FILENAME` |
+| `--train_split_file`, `--val_split_file`, `--test_split_file` | Same as training | `DEFAULT_*_SPLIT_FILE` |
+| `--num_folds`, `--fold_index`, `--fold_indices` | Same semantics as training | all folds |
+| `--batch_size` | Test loader batch size | `DEFAULT_BATCH_SIZE` |
+| `--hidden`, `--num_layers`, `--dropout`, `--num_classes` | Must match saved weights | same defaults as training |
+
+**Examples**
 
 ```bash
-# Default: results/trainings/ and results/datasets/, output = results/classifications/
 uv run python evaluate.py
-
-# Custom data root (for Splits/) and checkpoint filename (under results/trainings/)
-uv run python evaluate.py --data_root /path/to/snapshot --checkpoint best_gnn.pt
-
-# Same fold and architecture as training
 uv run python evaluate.py --data_root /path/to/snapshot --fold_index 2 --hidden 64 --num_layers 3 --num_classes 3
 ```
 
-After evaluation finishes, **`results/classifications/classification_summary.json`** is rewritten by scanning all **`fold_*/evaluation_results.json`** under that classifications root: it lists **`test_accuracy`** per fold and **`best_classification_fold_index`** (tie-break: lower fold index).
+#### 4.1. Evaluation report (`create_evaluation_report.py`)
 
-Options: `--data_root`, `--results_root`, `--checkpoint` (filename under `results/trainings/fold_<k>/`), `--train_split_file`, `--val_split_file`, `--test_split_file`, `--num_folds`, `--fold_index`, `--fold_indices`, `--batch_size`, `--hidden`, `--num_layers`, `--dropout`, `--num_classes` (must match the trained model).
+**What it does:** Discovers `fold_*/evaluation_results.json` (or one path to a single JSON), loads graphs from `results/datasets/` to draw shared thumbnails, merges validation/train@best-val metrics from `results/trainings/` when available, and writes `index.html` (summary table with per-column bests, then one tab per fold), `graphs/*.png`, and per-PDB HTML next to the report root.
 
-#### 4.1. Evaluation report (create_evaluation_report.py)
+**CLI parameters**
 
-After running `evaluate.py`, generate an HTML report with graph thumbnails and per-sample real vs predicted category. By default scans **`results/classifications/`** for every **`fold_<k>/evaluation_results.json`** (or a legacy flat **`evaluation_results.json`** at that root) and writes **`index.html`** (one tab per fold), **`graphs/`**, and per-PDB HTML into **`results/classifications/`** (not inside each `fold_<k>/` folder). The report starts with a **scores-by-fold** table: validation accuracy (best epoch) and train accuracy at that epoch are read from **`results/trainings/training_summary.json`** if present, otherwise from **`results/trainings/fold_<k>/training_metrics.json`**; test (classification) accuracy comes from the evaluation JSONs. The **best value in each column among the folds included in the report** is highlighted (useful with **`--folds`**).
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--classifications-dir` | Classifications directory or one `evaluation_results.json` | `DEFAULT_RESULTS_ROOT` / `results/classifications/` |
+| `--folds` | Restrict which fold JSONs feed the report | all discovered |
+
+**Examples**
 
 ```bash
-# All discovered folds; output under results/classifications/
 uv run python create_evaluation_report.py
-
-# Only folds 0 and 2
 uv run python create_evaluation_report.py --folds 0 2
-
-# Custom classifications root or a single evaluation_results.json file
 uv run python create_evaluation_report.py --classifications-dir path/to/classifications
-uv run python create_evaluation_report.py --classifications-dir path/to/fold_1/evaluation_results.json
 ```
 
-Output under **`results/classifications/`** (or next to a single JSON file if you pass that path):
-
-- `**index.html**`: fold comparison table (val / train@best val / test accuracies, with column bests highlighted); then a tab per fold; each tab lists test accuracy and a grid of thumbnails (real vs predicted category, correct/incorrect).
-- `**graphs/<PDB_ID>.png**`: one image per PDB (shared across folds; each graph drawn once).
-- `**<PDB_ID>.html**`: per-sample page (last fold processed wins if the same PDB appeared twice, which should not happen on disjoint test folds).
-- `**create_evaluation_report.log**`: run log.
+Outputs: `index.html`, `graphs/<PDB_ID>.png`, `<PDB_ID>.html`, `create_evaluation_report.log` (under the report directory).
 
 ---
 
@@ -510,7 +512,8 @@ print_test_report(test_metrics)
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **model.py**                    | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`).                                                                                        |
 | **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
-| **utils.py**                    | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger` (tee to file + stdout).                                                 |
+| **utils.py**                    | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger`, `FOLD_SUBDIR_NAME_RE` (matches `fold_<k>/` directory names).           |
+| **cli_common.py**               | Shared argparse helpers used by `train.py` and `evaluate.py` (paths, splits/folds, checkpoint, batch size, GINE hyperparameters).                                                |
 | **build_dataset.py**            | Builds PyG dataset to `results/datasets/`; writes `build.log`.                                                                                                                      |
 | **check_raw_data_format.py**    | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/check_input.log`.                                                                               |
 | **check_PyG_data_format.py**    | CLI: validate built dataset at `results/datasets/data.pt` by default; writes `results/check_format/datasets/check_output.log`.                                                      |
