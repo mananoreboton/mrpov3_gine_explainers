@@ -44,7 +44,7 @@ flowchart TB
     end
 
     subgraph out_classifications [results/classifications]
-        EvalJSON[evaluation_results.json]
+        EvalJSON[fold_k/evaluation_results.json]
         EvalLog[evaluate.log]
     end
 
@@ -52,8 +52,8 @@ flowchart TB
         ReportCLI[create_evaluation_report.py]
     end
 
-    subgraph out_report [same folder]
-        ReportHTML[index.html, *.html]
+    subgraph out_report [classifications root]
+        ReportHTML[index.html tabs per fold, *.html]
         ReportGraphs[graphs/*.png]
         ReportLog[create_evaluation_report.log]
     end
@@ -209,7 +209,7 @@ All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at
 | -------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
 | `results/datasets/`                          | `build_dataset.py` (`data.pt`, `pdb_order.txt`)                                            | `build.log`                                    |
 | `results/trainings/`                         | `train.py` (`best_gnn.pt`)                                                                 | `train.log`                                    |
-| `results/classifications/`                   | `evaluate.py` (`evaluation_results.json`), `create_evaluation_report.py` (HTML, `graphs/`) | `evaluate.log`, `create_evaluation_report.log` |
+| `results/classifications/`                   | `evaluate.py` (`fold_<k>/evaluation_results.json`), `create_evaluation_report.py` (`index.html`, `graphs/`, per-PDB HTML) | `evaluate.log`, `create_evaluation_report.log` |
 | `results/visualizations/`                    | `visualize_graphs.py` (fold → train/val/test plan; one draw per graph; `index.html` with a tab per fold) | `visualize.log`                                |
 | `results/check_format/datasets/`             | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
 | `results/check_format/raw_data/`             | `check_raw_data_format.py` (log only)                                                      | `check_input.log`                              |
@@ -362,7 +362,7 @@ The best model (by validation accuracy) is saved as `results/trainings/best_gnn.
 
 ### 4. Evaluate (evaluate.py) — run independently
 
-Evaluate a saved checkpoint on the test set without running training. Uses **`results/trainings/best_gnn.pt`** and **`results/datasets/data.pt`**. Use the same split/fold and model architecture as when the model was trained. **Categories are reported in the original scale (-1, 0, 1)** (low / medium / high potency). Results are saved to **`results/classifications/evaluation_results.json`** for use by the evaluation report script.
+Evaluate a saved checkpoint on the test set without running training. Uses **`results/trainings/fold_<k>/best_gnn.pt`** (or legacy flat trainings for fold 0) and **`results/datasets/data.pt`**. Use the same split/fold and model architecture as when the model was trained. **Categories are reported in the original scale (-1, 0, 1)** (low / medium / high potency). Results are saved under **`results/classifications/fold_<k>/evaluation_results.json`** for use by the evaluation report script.
 
 ```bash
 # Default: results/trainings/ and results/datasets/, output = results/classifications/
@@ -375,25 +375,29 @@ uv run python evaluate.py --data_root /path/to/snapshot --checkpoint best_gnn.pt
 uv run python evaluate.py --data_root /path/to/snapshot --fold_index 2 --hidden 64 --num_layers 3 --num_classes 3
 ```
 
-Options: `--data_root`, `--results_root`, `--checkpoint` (filename in `results/trainings/`), `--train_split_file`, `--val_split_file`, `--test_split_file`, `--num_folds`, `--fold_index`, `--batch_size`, `--hidden`, `--num_layers`, `--dropout`, `--num_classes` (must match the trained model).
+Options: `--data_root`, `--results_root`, `--checkpoint` (filename under `results/trainings/fold_<k>/`), `--train_split_file`, `--val_split_file`, `--test_split_file`, `--num_folds`, `--fold_index`, `--fold_indices`, `--batch_size`, `--hidden`, `--num_layers`, `--dropout`, `--num_classes` (must match the trained model).
 
 #### 4.1. Evaluation report (create_evaluation_report.py)
 
-After running `evaluate.py`, generate an HTML report with graph thumbnails and per-sample real vs predicted category. By default uses **`results/classifications/evaluation_results.json`** and writes the report into that same folder.
+After running `evaluate.py`, generate an HTML report with graph thumbnails and per-sample real vs predicted category. By default scans **`results/classifications/`** for every **`fold_<k>/evaluation_results.json`** (or a legacy flat **`evaluation_results.json`** at that root) and writes **`index.html`** (one tab per fold), **`graphs/`**, and per-PDB HTML into **`results/classifications/`** (not inside each `fold_<k>/` folder).
 
 ```bash
-# Uses results/classifications/evaluation_results.json
+# All discovered folds; output under results/classifications/
 uv run python create_evaluation_report.py
 
-# Custom results file
-uv run python create_evaluation_report.py --results path/to/evaluation_results.json
+# Only folds 0 and 2
+uv run python create_evaluation_report.py --folds 0 2
+
+# Custom classifications root or a single evaluation_results.json file
+uv run python create_evaluation_report.py --classifications-dir path/to/classifications
+uv run python create_evaluation_report.py --classifications-dir path/to/fold_1/evaluation_results.json
 ```
 
-Output is written into the same `**results/classifications/**` folder as the JSON:
+Output under **`results/classifications/`** (or next to a single JSON file if you pass that path):
 
-- `**index.html**`: index page with thumbnail links; each card shows PDB ID, real category, predicted category, and correct/incorrect.
-- `**graphs/<PDB_ID>.png**`: graph image per test sample.
-- `**<PDB_ID>.html**`: per-sample page with image, PDB ID, real category (-1/0/1), predicted category (-1/0/1).
+- `**index.html**`: tab per fold; each tab lists test accuracy and a grid of thumbnails (real vs predicted category, correct/incorrect).
+- `**graphs/<PDB_ID>.png**`: one image per PDB (shared across folds; each graph drawn once).
+- `**<PDB_ID>.html**`: per-sample page (last fold processed wins if the same PDB appeared twice, which should not happen on disjoint test folds).
 - `**create_evaluation_report.log**`: run log.
 
 ---
@@ -508,7 +512,7 @@ print_test_report(test_metrics)
 | **evaluation.py**               | Evaluation: `evaluate_test`, `TestMetrics`, `print_test_report`.                                                                                                                    |
 | **train.py**                    | CLI: load `results/datasets/data.pt`, train; save to `results/trainings/` and `train.log`.                                                                                          |
 | **evaluate.py**                 | CLI: load `results/trainings/best_gnn.pt`, evaluate; save to `results/classifications/` and `evaluate.log`.                                                                          |
-| **create_evaluation_report.py** | CLI: read `results/classifications/evaluation_results.json`, write HTML report into that folder; `create_evaluation_report.log`.                                                    |
+| **create_evaluation_report.py** | CLI: read `fold_*/evaluation_results.json` (or legacy flat JSON), optional `--folds`; write `index.html` (tabs), `graphs/`, per-PDB HTML under classifications root; `create_evaluation_report.log`. |
 | **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`.   |
 
 
