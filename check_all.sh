@@ -10,7 +10,7 @@
 #   1. uv sync — mprov3_gine_explainer_defaults, mprov3_gine, mprov3_explainer
 #   2. mprov3_gine_explainer_defaults — hardcoded constant names (see Python REQUIRED_NAMES below)
 #   3. mprov3_gine — README §0–§4.1 (config defaults)
-#   4. mprov3_explainer — run_explanations.py --explainer GNNExplainer --max_graphs 1, then generate_visualizations.py
+#   4. mprov3_explainer — run_explanations.py (best fold), then generate_visualizations.py (PNGs)
 #
 # Requires: MPro snapshot at mprov3_gine/config.DEFAULT_DATA_ROOT.
 
@@ -113,6 +113,9 @@ REQUIRED_NAMES = (
     'DEFAULT_TRAINING_CHECKPOINT_FILENAME',
     'DEFAULT_PYG_DATASET_NAME',
     'BUILT_DATASET_FOLDER_NAME',
+    'FoldMetric',
+    'read_num_folds_for_fold',
+    'resolve_best_fold_index',
     'resolve_checkpoint_path',
     'resolve_fold_indices',
     'training_checkpoint_path',
@@ -164,11 +167,11 @@ run_uv_python "$GNN_DIR" "§4.1 create_evaluation_report.py" create_evaluation_r
 # =============================================================================
 # 4. mprov3_explainer — explanations then visualizations (order required)
 # =============================================================================
-section "4. mprov3_explainer — scripts/run_explanations.py --explainer GNNEXPL --max_graphs 1 (fold 0)"
-run_uv_python "$MEX_DIR" "run_explanations.py" scripts/run_explanations.py --explainer GNNEXPL --max_graphs 1 --fold_index 0
+section "4. mprov3_explainer — scripts/run_explanations.py (best fold from classification summary)"
+run_uv_python "$MEX_DIR" "run_explanations.py" scripts/run_explanations.py --results_root "$GNN_DIR/results"
 
-section "4. mprov3_explainer — scripts/generate_visualizations.py --explainers GNNEXPL"
-run_uv_python "$MEX_DIR" "generate_visualizations.py" scripts/generate_visualizations.py --explainers GNNEXPL
+section "4. mprov3_explainer — scripts/generate_visualizations.py (PNG only)"
+run_uv_python "$MEX_DIR" "generate_visualizations.py" scripts/generate_visualizations.py
 
 echo ""
 if [[ "$FAILED" -eq 0 ]]; then

@@ -9,8 +9,7 @@ ROOT="$(cd "$MPROV3_SCRIPT_DIR/../.." && pwd)"
 GNN_DIR="$ROOT/mprov3_gine"
 MEX_DIR="$ROOT/mprov3_explainer"
 
-# Optional env: SKIP_SYNC=1, GNN_TRAIN_EPOCHS, NUM_FOLDS (default 5), EXPLAINERS (default GNNEXPL),
-# INCLUDE_MISCLASSIFIED=1 or pass -m / --include-misclassified before positional args.
+# Optional env: SKIP_SYNC=1, GNN_TRAIN_EPOCHS, NUM_FOLDS (default 5), FOLD_METRIC for run_explainer_fold.sh.
 
 mprov3_maybe_uv_sync() {
   if [[ "${SKIP_SYNC:-}" == "1" ]]; then
@@ -32,55 +31,7 @@ run_mex_py() {
   (cd "$MEX_DIR" && uv run python "$@")
 }
 
-# Sets INCLUDE_MISCLASSIFIED from -m / --include-misclassified; appends remaining args to MPROV3_ARGS.
-# Caller must run MPROV3_ARGS=() immediately before calling (global array; avoids nounset and bash
-# scoping quirks when MPROV3_ARGS=() would run inside the function).
-mprov3_strip_include_misclassified_flags() {
-  INCLUDE_MISCLASSIFIED="${INCLUDE_MISCLASSIFIED:-0}"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -m | --include-misclassified)
-        INCLUDE_MISCLASSIFIED=1
-        export INCLUDE_MISCLASSIFIED
-        shift
-        ;;
-      *)
-        MPROV3_ARGS+=("$1")
-        shift
-        ;;
-    esac
-  done
-}
-
-# Apply positional args after strip; safe with set -u and an empty remainder.
-mprov3_set_positional_from_mprov3_args() {
-  set -- ${MPROV3_ARGS[@]+"${MPROV3_ARGS[@]}"}
-}
-
 mprov3_fold_cli() {
   local nf="${NUM_FOLDS:-5}"
   echo --num_folds "$nf" --fold_index "${1:?fold index required}"
-}
-
-# Sets EXPLAIN_CLI_ARGS for run_explanations / generate_visualizations (bash 3.2–safe).
-mprov3_build_explain_cli() {
-  EXPLAIN_CLI_ARGS=()
-  local ex="${EXPLAINERS:-GNNEXPL}"
-  # shellcheck disable=SC2206
-  local parts=($ex)
-  if [[ ${#parts[@]} -eq 1 ]]; then
-    EXPLAIN_CLI_ARGS=(--explainer "${parts[0]}")
-  else
-    EXPLAIN_CLI_ARGS=(--explainers "${parts[@]}")
-  fi
-}
-
-# Caller must run MEX_MISCLASS_ARGS=() immediately before (global array; same nounset/scoping
-# pattern as MPROV3_ARGS). When passing to a command under set -u, do not use
-# "${MEX_MISCLASS_ARGS[@]}" directly if the array may be empty — use
-# ${MEX_MISCLASS_ARGS[@]+"${MEX_MISCLASS_ARGS[@]}"} (see smoke / run_explainer_fold).
-mprov3_misclassified_arg() {
-  if [[ "${INCLUDE_MISCLASSIFIED:-0}" == "1" ]]; then
-    MEX_MISCLASS_ARGS+=(--no_correct_class_only)
-  fi
 }

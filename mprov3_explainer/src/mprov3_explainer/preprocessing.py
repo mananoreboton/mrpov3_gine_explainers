@@ -75,6 +75,13 @@ def reduce_node_mask(node_mask: torch.Tensor) -> torch.Tensor:
     return node_mask.abs().mean(dim=-1)
 
 
+def _mask_weight_spread(mask: torch.Tensor) -> float:
+    """max − min; 0 if empty (treated as degenerate by callers)."""
+    if mask is None or mask.numel() == 0:
+        return 0.0
+    return float(mask.max().item() - mask.min().item())
+
+
 def _align_node_mask_to_graph(node_mask: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
     """
     Remove stray batch dimensions (e.g. Captum ``(1, N, F)``) so masks broadcast with
@@ -111,6 +118,8 @@ def apply_preprocessing(
     correct_class_only: bool = True,
     normalize: bool = True,
     convert_edge_to_node: bool = False,
+    apply_mask_spread_filter: bool = True,
+    mask_spread_tolerance: float = 1e-3,
 ) -> PreprocessedExplanation:
     """
     Apply Conversion (optional), Filtering, Normalization to a raw explanation.
@@ -139,12 +148,19 @@ def apply_preprocessing(
         if explanation.x is not None:
             node_mask = _align_node_mask_to_graph(node_mask, explanation.x)
 
-    # Optional conversion: edge -> node
+    if apply_mask_spread_filter:
+        tol = float(mask_spread_tolerance)
+        if edge_mask is not None and _mask_weight_spread(edge_mask) < tol:
+            valid = False
+        if node_mask is not None:
+            nm1 = reduce_node_mask(node_mask) if node_mask.dim() > 1 else node_mask
+            if _mask_weight_spread(nm1) < tol:
+                valid = False
+
+    # Optional conversion: edge -> node (raw aggregation; normalization follows below)
     if convert_edge_to_node and edge_mask is not None and edge_index is not None:
         num_nodes = explanation.x.size(0) if explanation.x is not None else None
         derived_node_mask = edge_mask_to_node_mask(edge_index, edge_mask, num_nodes=num_nodes)
-        if normalize:
-            derived_node_mask = normalize_mask(derived_node_mask)
         if node_mask is None:
             node_mask = derived_node_mask
 

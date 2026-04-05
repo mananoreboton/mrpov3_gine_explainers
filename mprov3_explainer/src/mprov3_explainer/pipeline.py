@@ -349,6 +349,8 @@ def run_explanations(
     get_graph_id: Optional[Callable[..., str]] = None,
     apply_preprocessing_flag: bool = True,
     correct_class_only: bool = True,
+    apply_mask_spread_filter: bool = True,
+    mask_spread_tolerance: float = 1e-3,
     train_loader: Optional[Any] = None,
     pg_train_max_graphs: Optional[int] = None,
     paper_metrics: bool = True,
@@ -441,6 +443,8 @@ def run_explanations(
                     correct_class_only=correct_class_only,
                     normalize=True,
                     convert_edge_to_node=False,
+                    apply_mask_spread_filter=apply_mask_spread_filter,
+                    mask_spread_tolerance=mask_spread_tolerance,
                 )
                 explanation = raw_explanation.clone()
                 _pre_edge_mask = getattr(preproc.explanation, "edge_mask", None)

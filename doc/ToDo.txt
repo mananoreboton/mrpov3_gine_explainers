@@ -3,3 +3,9 @@ WARNING:mprov3_explainer.pipeline:Paper metrics failed for PGMEXPL / 7GKR: Expec
   7GKR: fid+=0.0000 fid-=1.0000 char=0.0000 Fsuf=0.0000 Fcom=0.0000 Ff1=0.0000 [excluded] (0.55s)
 WARNING:mprov3_explainer.pipeline:Paper metrics failed for PGMEXPL / 7GFH: Expected more than 1 value per channel when training, got input size torch.Size([1, 64])
   7GFH: fid+=0.0000 fid-=0.0000 char=0.0000 Fsuf=0.0000 Fcom=0.0000 Ff1=0.0000 [excluded] (0.54s)
+
+
+  - explnaier from max val o max classify
+  - optional param to enable/disable the filtering 
+  - add capacity to do train without validation splip
+  - create dataset con un solo fold merged

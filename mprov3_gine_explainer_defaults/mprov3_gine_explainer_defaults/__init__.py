@@ -30,6 +30,11 @@ from mprov3_gine_explainer_defaults.training_defaults import (
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
 )
+from mprov3_gine_explainer_defaults.best_fold import (
+    FoldMetric,
+    read_num_folds_for_fold,
+    resolve_best_fold_index,
+)
 from mprov3_gine_explainer_defaults.fold_indices import resolve_fold_indices
 from mprov3_gine_explainer_defaults.results_path_resolution import (
     explanations_run_dir,
@@ -126,6 +131,9 @@ __all__ = [
     "DEFAULT_TRAINING_CHECKPOINT_FILENAME",
     "DEFAULT_PYG_DATASET_NAME",
     "BUILT_DATASET_FOLDER_NAME",
+    "FoldMetric",
+    "read_num_folds_for_fold",
+    "resolve_best_fold_index",
     "resolve_fold_indices",
     "resolve_checkpoint_path",
     "training_checkpoint_path",
