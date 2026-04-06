@@ -626,20 +626,16 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_NUM_FOLDS,
         help=f"Number of CV folds in the split files (default: {DEFAULT_NUM_FOLDS}).",
     )
-    fold_group = parser.add_mutually_exclusive_group()
-    fold_group.add_argument(
-        "--fold_index",
-        type=int,
-        default=None,
-        help="Only include this CV fold in the plan (train/val/test sections for that fold).",
-    )
-    fold_group.add_argument(
+    parser.add_argument(
         "--fold_indices",
         type=int,
         nargs="+",
         default=None,
         metavar="K",
-        help="Only include these CV folds in the plan (order preserved).",
+        help=(
+            "Only include these CV folds in the plan (order preserved; e.g. one fold: --fold_indices 0). "
+            "Default: all folds."
+        ),
     )
     parser.add_argument(
         "--train_split_file",
@@ -690,16 +686,9 @@ def main() -> None:
     if raw is not None:
         plan = raw
     else:
-        if args.fold_index is not None or args.fold_indices is not None:
-            fold_list = resolve_fold_indices(
-                args.num_folds,
-                fold_index=args.fold_index,
-                fold_indices=list(args.fold_indices)
-                if args.fold_indices is not None
-                else None,
-            )
-        else:
-            fold_list = list(range(args.num_folds))
+        fold_list = resolve_fold_indices(
+            args.num_folds, fold_indices=args.fold_indices
+        )
         split_plan = plan_by_fold_and_split(
             ds,
             pdb_order,
@@ -728,8 +717,7 @@ def main() -> None:
         log.log(f"Output: {output_dir}")
         log.log(
             f"Loaded {len(ds)} graphs; plan has {len(plan)} index row(s) "
-            f"(splits_root={splits_root}, fold_index={args.fold_index}, "
-            f"fold_indices={args.fold_indices}, "
+            f"(splits_root={splits_root}, fold_indices={args.fold_indices}, "
             f"num_graphs_by_fold={args.num_graphs_by_fold}, indices={args.indices})"
         )
 

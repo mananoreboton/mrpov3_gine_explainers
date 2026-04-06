@@ -748,20 +748,16 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_NUM_FOLDS,
         help=f"Number of folds expected in the split files (default: {DEFAULT_NUM_FOLDS}).",
     )
-    fold_group = parser.add_mutually_exclusive_group()
-    fold_group.add_argument(
-        "--fold_index",
-        type=int,
-        default=None,
-        help="Check split indices for a single fold only. Default: all folds.",
-    )
-    fold_group.add_argument(
+    parser.add_argument(
         "--fold_indices",
         type=int,
         nargs="+",
         default=None,
         metavar="K",
-        help="Check these fold indices only. Default: all folds.",
+        help=(
+            "Check these fold indices only (e.g. one fold: --fold_indices 0). "
+            "Default: all folds."
+        ),
     )
     parser.add_argument(
         "--num_classes",
@@ -832,11 +828,7 @@ def main() -> None:
 
     splits_root = Path(args.splits_root or DEFAULT_DATA_ROOT)
 
-    fold_list = resolve_fold_indices(
-        args.num_folds,
-        fold_index=args.fold_index,
-        fold_indices=args.fold_indices,
-    )
+    fold_list = resolve_fold_indices(args.num_folds, fold_indices=args.fold_indices)
 
     log_dir = results_root / RESULTS_CHECK_FORMAT / CHECK_FORMAT_DATASETS_SUBDIR
     log_dir.mkdir(parents=True, exist_ok=True)

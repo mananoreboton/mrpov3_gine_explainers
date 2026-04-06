@@ -298,7 +298,7 @@ uv run python build_dataset.py --data_root /path/to/mprov3_data --results_root r
 
 **What it does:** Loads `data.pt`, maps split PDB IDs to dataset indices, and checks label ranges and graph fields so training and test-set classification will not hit silent mismatches.
 
-**CLI parameters:** `--data_root` (folder containing `data.pt`, default flat `results/datasets/`), `--splits_root` (raw snapshot for `Splits/`), split filenames, `--num_folds`, `--fold_index` or `--fold_indices`, `--num_classes`, `--max_samples`, `--verbose`, `--quiet`. See `uv run python check_PyG_data_format.py --help`.
+**CLI parameters:** `--data_root` (folder containing `data.pt`, default flat `results/datasets/`), `--splits_root` (raw snapshot for `Splits/`), split filenames, `--num_folds`, `--fold_indices` (omit for all folds; one fold: e.g. `--fold_indices 0`), `--num_classes`, `--max_samples`, `--verbose`, `--quiet`. See `uv run python check_PyG_data_format.py --help`.
 
 **Examples**
 
@@ -311,7 +311,7 @@ uv run python check_PyG_data_format.py --splits_root /path/to/mprov3_data
 
 **What it does:** Draws each ligand with RDKit’s 2D drawer, using the built `data.pt` and the same CV plan as training (folds × train → val → test). Each graph file is written at most once; `index.html` can still list the same PDB under multiple fold/split headings. Categories use the original scale (-1, 0, 1); coordinates use x and y only for layout.
 
-**CLI parameters:** `--results_root`, `--splits_root`, `--num_folds`, `--fold_index` or `--fold_indices`, split filenames, `--num-graphs-by-fold`, `--indices` (overrides plan), `--svg`. See `uv run python visualize_graphs.py --help`.
+**CLI parameters:** `--results_root`, `--splits_root`, `--num_folds`, `--fold_indices` (omit for all folds; one fold: e.g. `--fold_indices 0`), split filenames, `--num-graphs-by-fold`, `--indices` (overrides plan), `--svg`. See `uv run python visualize_graphs.py --help`.
 
 **Examples**
 
@@ -336,22 +336,21 @@ Split files list PDB IDs per fold; defaults are `train_index_folder.txt`, `valid
 | `--results_root` | Reads `results/datasets/`, writes `results/trainings/` | `DEFAULT_RESULTS_ROOT` |
 | `--train_split_file`, `--val_split_file`, `--test_split_file` | Names under `Splits/` | `DEFAULT_*_SPLIT_FILE` |
 | `--num_folds` | CV fold count | `DEFAULT_NUM_FOLDS` |
-| `--fold_index` | Single fold (mutually exclusive with next) | all folds |
-| `--fold_indices` | Subset of folds | all folds |
-| `--checkpoint` | Filename under each `trainings/fold_<k>/` | `DEFAULT_TRAINING_CHECKPOINT_FILENAME` |
+| `--fold_indices` | Which folds to train (omit = all; one fold: e.g. `--fold_indices 0`) | all folds |
 | `--epochs` | Training epochs | `DEFAULT_TRAINING_EPOCHS` |
 | `--batch_size` | Loader batch size | `DEFAULT_BATCH_SIZE` |
 | `--lr` | Adam learning rate | `DEFAULT_TRAINING_LR` |
 | `--hidden`, `--num_layers`, `--dropout` | GINE width, depth, dropout | `DEFAULT_HIDDEN_CHANNELS`, `DEFAULT_NUM_LAYERS`, `DEFAULT_DROPOUT` |
-| `--num_classes` | Output classes (Category) | `DEFAULT_OUT_CLASSES` |
-| `--seed` | Torch manual seed | `DEFAULT_SEED` |
+| `--seed` | Torch manual seed (omit = random seed each run, logged in `train.log`) | random |
 | `--no_validation` | Skip val split; checkpoint on train acc | off |
+
+Checkpoints are always saved as `DEFAULT_TRAINING_CHECKPOINT_FILENAME` (`best_gnn.pt`) under each `trainings/fold_<k>/`. Class count is fixed at `DEFAULT_OUT_CLASSES` (3).
 
 **Examples**
 
 ```bash
 uv run python train.py
-uv run python train.py --data_root /path/to/mprov3_data --fold_index 0
+uv run python train.py --data_root /path/to/mprov3_data --fold_indices 0
 ```
 
 **Full example**
@@ -360,10 +359,10 @@ uv run python train.py --data_root /path/to/mprov3_data --fold_index 0
 uv run python build_dataset.py --data_root /path/to/mprov3_data
 uv run python train.py \
   --data_root /path/to/mprov3_data \
-  --num_folds 5 --fold_index 0 \
+  --num_folds 5 --fold_indices 0 \
   --epochs 100 --batch_size 32 --lr 1e-3 \
   --hidden 64 --num_layers 3 --dropout 0.2 \
-  --num_classes 3 --seed 42
+  --seed 42
 ```
 
 ### 6. Classify test set (`classify.py`)
@@ -378,7 +377,7 @@ uv run python train.py \
 | `--results_root` | Reads trainings + datasets, writes `classifications/` | `DEFAULT_RESULTS_ROOT` |
 | `--checkpoint` | Checkpoint filename under each `trainings/fold_<k>/` | `DEFAULT_TRAINING_CHECKPOINT_FILENAME` |
 | `--train_split_file`, `--val_split_file`, `--test_split_file` | Same as training | `DEFAULT_*_SPLIT_FILE` |
-| `--num_folds`, `--fold_index`, `--fold_indices` | Same semantics as training | all folds |
+| `--num_folds`, `--fold_indices` | Same semantics as training | all folds |
 | `--batch_size` | Test loader batch size | `DEFAULT_BATCH_SIZE` |
 | `--hidden`, `--num_layers`, `--dropout`, `--num_classes` | Must match saved weights | same defaults as training |
 
@@ -386,7 +385,7 @@ uv run python train.py \
 
 ```bash
 uv run python classify.py
-uv run python classify.py --data_root /path/to/snapshot --fold_index 2 --hidden 64 --num_layers 3 --num_classes 3
+uv run python classify.py --data_root /path/to/snapshot --fold_indices 2 --hidden 64 --num_layers 3 --num_classes 3
 ```
 
 ### 7. Classification report (`create_classification_report.py`)
@@ -419,7 +418,7 @@ You can reuse configs, loaders, and train/val/test logic in your own scripts.
 #### Configuration
 
 - `**SplitConfig**` (from `**mprov3_gine_explainer_defaults**`): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (use `BUILT_DATASET_FOLDER_NAME` / `"."` with `results/datasets` as loader root).
-- **Training hyperparameters** (`epochs`, `batch_size`, `lr`, `seed`): defaults from `**mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`, `DEFAULT_SEED`).
+- **Training hyperparameters** (`epochs`, `batch_size`, `lr`): defaults from `**mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`). For `seed`, pass `--seed`; if omitted, `train.py` picks a random seed and logs it in `train.log`.
 - `**model.MProGNN**`: GINE architecture; construct with hyperparameters (defaults align with `**mprov3_gine_explainer_defaults**` e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
 
 #### Data loaders
@@ -513,7 +512,7 @@ print_test_classification_report(test_metrics)
 | **model.py**                    | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`).                                                                                        |
 | **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
 | **utils.py**                    | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger`, `FOLD_SUBDIR_NAME_RE` (matches `fold_<k>/` directory names).           |
-| **cli_common.py**               | Shared argparse helpers used by `train.py` and `classify.py` (paths, splits/folds, checkpoint, batch size, GINE hyperparameters).                                                |
+| **cli_common.py**               | Shared argparse helpers used by `train.py` and `classify.py` (paths, splits/`--fold_indices`, checkpoint for classify only, batch size, GINE hyperparameters).                                                |
 | **build_dataset.py**            | Builds PyG dataset to `results/datasets/`; writes `build.log`.                                                                                                                      |
 | **check_raw_data_format.py**    | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/check_input.log`.                                                                               |
 | **check_PyG_data_format.py**    | CLI: validate built dataset at `results/datasets/data.pt` by default; writes `results/check_format/datasets/check_output.log`.                                                      |

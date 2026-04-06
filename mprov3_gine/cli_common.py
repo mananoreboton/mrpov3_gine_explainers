@@ -42,7 +42,6 @@ def add_data_and_results_roots(
 def add_split_and_fold_args(
     parser: argparse.ArgumentParser,
     *,
-    fold_index_help: str,
     fold_indices_help: str,
 ) -> None:
     parser.add_argument(
@@ -69,14 +68,7 @@ def add_split_and_fold_args(
         default=DEFAULT_NUM_FOLDS,
         help=f"Number of folds (default: {DEFAULT_NUM_FOLDS})",
     )
-    fold_group = parser.add_mutually_exclusive_group()
-    fold_group.add_argument(
-        "--fold_index",
-        type=int,
-        default=None,
-        help=fold_index_help,
-    )
-    fold_group.add_argument(
+    parser.add_argument(
         "--fold_indices",
         type=int,
         nargs="+",
@@ -108,7 +100,10 @@ def add_batch_size_arg(parser: argparse.ArgumentParser, *, for_classification: b
 
 
 def add_model_loader_args(
-    parser: argparse.ArgumentParser, *, for_classification: bool
+    parser: argparse.ArgumentParser,
+    *,
+    for_classification: bool,
+    include_num_classes: bool = True,
 ) -> None:
     match_kw: dict = {}
     if for_classification:
@@ -122,14 +117,15 @@ def add_model_loader_args(
     parser.add_argument(
         "--dropout", type=float, default=DEFAULT_DROPOUT, **match_kw
     )
-    num_cls_help = (
-        f"Number of classes (Category, default: {DEFAULT_OUT_CLASSES})"
-        if not for_classification
-        else f"Number of classes (default: {DEFAULT_OUT_CLASSES})"
-    )
-    parser.add_argument(
-        "--num_classes",
-        type=int,
-        default=DEFAULT_OUT_CLASSES,
-        help=num_cls_help,
-    )
+    if include_num_classes:
+        num_cls_help = (
+            f"Number of classes (Category, default: {DEFAULT_OUT_CLASSES})"
+            if not for_classification
+            else f"Number of classes (default: {DEFAULT_OUT_CLASSES})"
+        )
+        parser.add_argument(
+            "--num_classes",
+            type=int,
+            default=DEFAULT_OUT_CLASSES,
+            help=num_cls_help,
+        )

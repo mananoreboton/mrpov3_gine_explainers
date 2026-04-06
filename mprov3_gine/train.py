@@ -7,6 +7,7 @@ across folds. CLI flags are documented in README.md (Usage) and ``train.py --hel
 
 import argparse
 import json
+import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -17,9 +18,9 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_DATA_ROOT,
     DEFAULT_EDGE_DIM,
     DEFAULT_IN_CHANNELS,
+    DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
     DEFAULT_RESULTS_ROOT,
-    DEFAULT_SEED,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
@@ -33,7 +34,6 @@ from mprov3_gine_explainer_defaults import (
 
 from cli_common import (
     add_batch_size_arg,
-    add_checkpoint_arg,
     add_data_and_results_roots,
     add_model_loader_args,
     add_split_and_fold_args,
@@ -146,18 +146,21 @@ def _parse_args() -> argparse.Namespace:
     )
     add_split_and_fold_args(
         parser,
-        fold_index_help="Train a single fold (0 .. num_folds-1). Default: all folds.",
-        fold_indices_help="Train these fold indices only. Default: all folds 0..num_folds-1.",
-    )
-    add_checkpoint_arg(
-        parser,
-        help=f"Checkpoint filename under each trainings/fold_<k>/ (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
+        fold_indices_help=(
+            "Train only these fold indices (e.g. one fold: --fold_indices 0). "
+            "Default: all folds 0..num_folds-1."
+        ),
     )
     parser.add_argument("--epochs", type=int, default=DEFAULT_TRAINING_EPOCHS)
     add_batch_size_arg(parser, for_classification=False)
     parser.add_argument("--lr", type=float, default=DEFAULT_TRAINING_LR)
-    add_model_loader_args(parser, for_classification=False)
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    add_model_loader_args(parser, for_classification=False, include_num_classes=False)
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Torch manual seed. If omitted, a random seed is chosen and logged.",
+    )
     parser.add_argument(
         "--no_validation",
         action="store_true",
@@ -174,11 +177,7 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    fold_list = resolve_fold_indices(
-        args.num_folds,
-        fold_index=args.fold_index,
-        fold_indices=args.fold_indices,
-    )
+    fold_list = resolve_fold_indices(args.num_folds, fold_indices=args.fold_indices)
 
     dataset_dir = resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
@@ -188,15 +187,19 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "train.log"
 
-    torch.manual_seed(args.seed)
+    seed = args.seed if args.seed is not None else secrets.randbits(31)
+    torch.manual_seed(seed)
+
+    ckpt_name = DEFAULT_TRAINING_CHECKPOINT_FILENAME
 
     with RunLogger(log_path) as log:
         log_overwrite_dir_if_nonempty(out_dir, log.log)
         log.log(f"Dataset: {dataset_dir}")
         log.log(f"Output: {out_dir}")
+        log.log(f"Random seed: {seed}")
         log.log(
             f"Folds to train: {fold_list} (num_folds={args.num_folds}, "
-            f"checkpoint name={args.checkpoint})"
+            f"checkpoint name={ckpt_name})"
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -237,14 +240,14 @@ def main() -> None:
                 hidden_channels=args.hidden,
                 num_layers=args.num_layers,
                 dropout=args.dropout,
-                out_classes=args.num_classes,
+                out_classes=DEFAULT_OUT_CLASSES,
                 pool=DEFAULT_POOL,
                 edge_dim=DEFAULT_EDGE_DIM,
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
             criterion_ce = nn.CrossEntropyLoss()
 
-            ckpt_path = training_checkpoint_path(results_root, k, args.checkpoint)
+            ckpt_path = training_checkpoint_path(results_root, k, ckpt_name)
             ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
             best_val_acc: Optional[float] = 0.0
@@ -298,7 +301,7 @@ def main() -> None:
                 use_validation=use_val,
                 best_validation_accuracy=best_val_acc if use_val else None,
                 train_accuracy_at_best_validation=best_train_acc_at_best_val,
-                checkpoint=args.checkpoint,
+                checkpoint=ckpt_name,
                 log=log.log,
             )
 

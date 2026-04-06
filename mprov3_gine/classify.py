@@ -114,8 +114,10 @@ def _parse_args() -> argparse.Namespace:
     )
     add_split_and_fold_args(
         parser,
-        fold_index_help="Classify the test set for a single fold (0 .. num_folds-1). Default: all folds.",
-        fold_indices_help="Classify the test set for these fold indices only. Default: all folds.",
+        fold_indices_help=(
+            "Classify the test set for these fold indices only (e.g. one fold: --fold_indices 2). "
+            "Default: all folds."
+        ),
     )
     add_batch_size_arg(parser, for_classification=True)
     add_model_loader_args(parser, for_classification=True)
@@ -129,11 +131,7 @@ def main() -> None:
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
-    fold_list = resolve_fold_indices(
-        args.num_folds,
-        fold_index=args.fold_index,
-        fold_indices=args.fold_indices,
-    )
+    fold_list = resolve_fold_indices(args.num_folds, fold_indices=args.fold_indices)
 
     dataset_dir = resolve_dataset_dir(results_root)
     dataset_base = results_root / RESULTS_DATASETS
