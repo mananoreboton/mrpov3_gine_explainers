@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-Draw RDKit PNGs from saved explanation masks (single fold under results/folds/fold_*/).
-No HTML, no HTTP server, no multi-fold report.
+Draw RDKit PNGs from saved explanation masks (single fold under results/folds/fold_*/)
+and write a static HTML report with explainer metrics, mask images, and raw mask JSON.
 
 Usage:
   uv run python scripts/generate_visualizations.py
+  uv run python scripts/generate_visualizations.py --report-only
+  uv run python scripts/generate_visualizations.py --no-report
 
-Reads ``mprov3_explainer/results`` and ligand SDFs from the workspace default MPro snapshot.
+Reads ``mprov3_explainer/results`` and ligand SDFs from the workspace default MPro snapshot
+(unless ``--report-only``). The report is written to
+``results/folds/fold_*/explanation_web_report/index.html`` with relative links to
+``visualizations/`` and embedded mask JSON; open the file in a browser (no HTTP server required).
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from mprov3_gine_explainer_defaults import (
 
 from mprov3_explainer import AVAILABLE_EXPLAINERS, validate_explainer, visualizations_run_dir
 from mprov3_explainer.visualize import draw_molecule_with_mask
+from mprov3_explainer.web_report import write_fold_explanation_web_report
 
 
 def _parse_args():
@@ -39,9 +45,20 @@ def _parse_args():
 
     p = argparse.ArgumentParser(
         description=(
-            "Write mask PNGs from one fold of explainer outputs (RDKit only). "
-            "Uses mprov3_explainer/results and the default MPro snapshot path."
+            "Write mask PNGs from one fold of explainer outputs (RDKit) and/or emit a static "
+            "HTML report under explanation_web_report/. Uses mprov3_explainer/results."
         ),
+    )
+    p.add_argument(
+        "--no-report",
+        action="store_true",
+        help="Skip writing explanation_web_report/index.html.",
+    )
+    p.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Only regenerate the HTML report from existing explanations/ and visualizations/ "
+        "(no RDKit drawing; does not require MPro SDFs).",
     )
     return p.parse_args()
 
@@ -101,7 +118,7 @@ def _explainers_in_fold(explanations_base: Path) -> list[str]:
 
 
 def main() -> None:
-    _parse_args()
+    args = _parse_args()
     results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
     if not results_root.exists():
         raise FileNotFoundError(f"Results root not found: {results_root}")
@@ -114,51 +131,58 @@ def main() -> None:
     for n in explainer_names:
         validate_explainer(n)
 
-    data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
-    if not data_root.exists():
-        raise FileNotFoundError(f"Data root not found: {data_root}")
-    sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
-    if not sdf_dir.exists():
-        raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
+    if args.report_only:
+        print(f"Fold {fold_index}: --report-only (skipping RDKit PNG generation)", flush=True)
+    if not args.report_only:
+        data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
+        if not data_root.exists():
+            raise FileNotFoundError(f"Data root not found: {data_root}")
+        sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
+        if not sdf_dir.is_dir():
+            raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
 
-    print(f"Fold {fold_index}: writing PNGs for {', '.join(explainer_names)}", flush=True)
+        print(f"Fold {fold_index}: writing PNGs for {', '.join(explainer_names)}", flush=True)
 
-    for explainer_name in explainer_names:
-        explanation_dir = explanations_base / explainer_name
-        report = json.loads(
-            (explanation_dir / "explanation_report.json").read_text(encoding="utf-8"),
-        )
-        masks_dir = explanation_dir / "masks"
-        vis_out = visualizations_run_dir(fold_root, explainer_name)
-        graphs_dir = vis_out / "graphs"
-        graphs_dir.mkdir(parents=True, exist_ok=True)
+        for explainer_name in explainer_names:
+            explanation_dir = explanations_base / explainer_name
+            report = json.loads(
+                (explanation_dir / "explanation_report.json").read_text(encoding="utf-8"),
+            )
+            masks_dir = explanation_dir / "masks"
+            vis_out = visualizations_run_dir(fold_root, explainer_name)
+            graphs_dir = vis_out / "graphs"
+            graphs_dir.mkdir(parents=True, exist_ok=True)
 
-        drawn = 0
-        for e in report.get("per_graph", []):
-            graph_id = e.get("graph_id", "")
-            if not graph_id:
-                continue
-            mask_path = masks_dir / f"{graph_id}.json"
-            if not mask_path.is_file():
-                continue
-            mask_data = json.loads(mask_path.read_text(encoding="utf-8"))
-            edge_index = mask_data.get("edge_index")
-            edge_mask = mask_data.get("edge_mask")
-            node_mask = mask_data.get("node_mask")
-            if edge_index is None and node_mask is None:
-                continue
-            sdf_path = sdf_dir / f"{graph_id}_ligand.sdf"
-            out_png = graphs_dir / f"mask_{graph_id}.png"
-            if draw_molecule_with_mask(
-                sdf_path,
-                edge_index=edge_index,
-                edge_mask=edge_mask,
-                out_path_png=out_png,
-                node_mask=node_mask,
-            ):
-                drawn += 1
-                print(f"  {explainer_name}: {out_png.relative_to(fold_root)}", flush=True)
-        print(f"{explainer_name}: {drawn} image(s) under {vis_out}", flush=True)
+            drawn = 0
+            for e in report.get("per_graph", []):
+                graph_id = e.get("graph_id", "")
+                if not graph_id:
+                    continue
+                mask_path = masks_dir / f"{graph_id}.json"
+                if not mask_path.is_file():
+                    continue
+                mask_data = json.loads(mask_path.read_text(encoding="utf-8"))
+                edge_index = mask_data.get("edge_index")
+                edge_mask = mask_data.get("edge_mask")
+                node_mask = mask_data.get("node_mask")
+                if edge_index is None and node_mask is None:
+                    continue
+                sdf_path = sdf_dir / f"{graph_id}_ligand.sdf"
+                out_png = graphs_dir / f"mask_{graph_id}.png"
+                if draw_molecule_with_mask(
+                    sdf_path,
+                    edge_index=edge_index,
+                    edge_mask=edge_mask,
+                    out_path_png=out_png,
+                    node_mask=node_mask,
+                ):
+                    drawn += 1
+                    print(f"  {explainer_name}: {out_png.relative_to(fold_root)}", flush=True)
+            print(f"{explainer_name}: {drawn} image(s) under {vis_out}", flush=True)
+
+    if not args.no_report:
+        out_html = write_fold_explanation_web_report(fold_root, fold_index, explainer_names)
+        print(f"Web report written: {out_html}", flush=True)
 
 
 if __name__ == "__main__":
