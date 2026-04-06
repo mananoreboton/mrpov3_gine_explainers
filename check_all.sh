@@ -9,7 +9,7 @@
 # Order:
 #   1. uv sync — mprov3_gine_explainer_defaults, mprov3_gine, mprov3_explainer
 #   2. mprov3_gine_explainer_defaults — hardcoded constant names (see Python REQUIRED_NAMES below)
-#   3. mprov3_gine — README §0–§4.1 (config defaults)
+#   3. mprov3_gine — README pipeline steps 1–7 (config defaults)
 #   4. mprov3_explainer — run_explanations.py (best fold), then generate_visualizations.py (PNGs)
 #
 # Requires: MPro snapshot at mprov3_gine/config.DEFAULT_DATA_ROOT.
@@ -141,28 +141,28 @@ print('OK:', len(REQUIRED_NAMES), 'constants')
 ) || fail "mprov3_gine_explainer_defaults constants check"
 
 # =============================================================================
-# 3. mprov3_gine — README §0–§4.1 (default MPRO_DATA_ROOT from config)
+# 3. mprov3_gine — README steps 1–7 (default MPRO_DATA_ROOT from config)
 # =============================================================================
-section "3. mprov3_gine — §0 check_raw_data_format.py (defaults)"
-run_uv_python "$GNN_DIR" "§0 check_raw_data_format.py" check_raw_data_format.py
+section "3. mprov3_gine — README step 1 check_raw_data_format.py (defaults)"
+run_uv_python "$GNN_DIR" "README step 1 check_raw_data_format.py" check_raw_data_format.py
 
-section "3. mprov3_gine — §1 build_dataset.py (defaults)"
-run_uv_python "$GNN_DIR" "§1 build_dataset.py" build_dataset.py
+section "3. mprov3_gine — README step 2 build_dataset.py (defaults)"
+run_uv_python "$GNN_DIR" "README step 2 build_dataset.py" build_dataset.py
 
-section "3. mprov3_gine — §1.1 check_PyG_data_format.py (fold 0)"
-run_uv_python "$GNN_DIR" "§1.1 check_PyG_data_format.py" check_PyG_data_format.py --fold_index 0
+section "3. mprov3_gine — README step 3 check_PyG_data_format.py (fold 0)"
+run_uv_python "$GNN_DIR" "README step 3 check_PyG_data_format.py" check_PyG_data_format.py --fold_index 0
 
-section "3. mprov3_gine — §2 visualize_graphs.py --num-graphs-by-fold 1"
-run_uv_python "$GNN_DIR" "§2 visualize_graphs.py" visualize_graphs.py --num-graphs-by-fold 1
+section "3. mprov3_gine — README step 4 visualize_graphs.py --num-graphs-by-fold 1"
+run_uv_python "$GNN_DIR" "README step 4 visualize_graphs.py" visualize_graphs.py --num-graphs-by-fold 1
 
-section "3. mprov3_gine — §3 train.py (epochs=$GNN_TRAIN_EPOCHS, fold 0)"
-run_uv_python "$GNN_DIR" "§3 train.py" train.py --epochs "$GNN_TRAIN_EPOCHS" --fold_index 0
+section "3. mprov3_gine — README step 5 train.py (epochs=$GNN_TRAIN_EPOCHS, fold 0)"
+run_uv_python "$GNN_DIR" "README step 5 train.py" train.py --epochs "$GNN_TRAIN_EPOCHS" --fold_index 0
 
-section "3. mprov3_gine — §4 classify.py (fold 0)"
-run_uv_python "$GNN_DIR" "§4 classify.py" classify.py --fold_index 0
+section "3. mprov3_gine — README step 6 classify.py (fold 0)"
+run_uv_python "$GNN_DIR" "README step 6 classify.py" classify.py --fold_index 0
 
-section "3. mprov3_gine — §4.1 create_classification_report.py (defaults)"
-run_uv_python "$GNN_DIR" "§4.1 create_classification_report.py" create_classification_report.py
+section "3. mprov3_gine — README step 7 create_classification_report.py (defaults)"
+run_uv_python "$GNN_DIR" "README step 7 create_classification_report.py" create_classification_report.py
 
 # =============================================================================
 # 4. mprov3_explainer — explanations then visualizations (order required)

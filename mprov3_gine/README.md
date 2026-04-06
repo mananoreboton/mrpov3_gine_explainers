@@ -4,7 +4,7 @@ Python pipeline to train a Graph Neural Network on the MPro-URV Version 3 snapsh
 
 **Shared defaults:** Training, fold, GINE architecture, path segment names, `**SplitConfig`**, `**DEFAULT_DATA_ROOT**`, `**DEFAULT_RESULTS_ROOT**`, and sibling project `**Path`s (`WORKSPACE_ROOT**`, `**GINE_PROJECT_DIR**`, …) come from `**mprov3_gine_explainer_defaults**` (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is `**MProGNN**` in `**model.py**`.
 
-**Shell orchestration:** End-to-end runs (same step order as repo `check_all.sh` §3, plus optional explainer steps) for smoke tests, a single CV fold, or all folds live under [**`scripts/mprov3/`**](../scripts/mprov3/README.md) (`smoke_gine_explainer.sh`, `run_gine_fold.sh`, `run_gine_explainer_fold.sh`, etc.). See that README for `SKIP_SYNC`, `NUM_FOLDS`, `GNN_TRAIN_EPOCHS`, and the **`-m` / `--include-misclassified`** flag for explainer runs.
+**End-to-end check:** From the repository root, run [`check_all.sh`](../check_all.sh) to run `uv sync`, validate shared defaults, the `mprov3_gine` pipeline (README steps 1–7 below with default paths), and the explainer scripts in [`mprov3_explainer`](../mprov3_explainer/README.md). Override training length with `GNN_TRAIN_EPOCHS` (see `check_all.sh` header). For explainer-only flags (e.g. **`--include-misclassified`**), see `mprov3_explainer` CLI help.
 
 ## Overview
 
@@ -255,7 +255,7 @@ Requires: PyTorch, PyTorch Geometric, RDKit, pandas, numpy, scikit-learn.
 
 Exact paths and overwrite behavior are fixed under `results/` (see **Results layout** above).
 
-### 0. Validate raw input (`check_raw_data_format.py`)
+### 1. Validate raw input (`check_raw_data_format.py`)
 
 **What it does:** Walks the raw MPro tree (`Info.csv`, `Ligand/`, `Splits/`) and checks that files match what `build_dataset.py` expects. On failure, exits non-zero and prints `[ERROR]` lines.
 
@@ -276,7 +276,7 @@ uv run python check_raw_data_format.py
 uv run python check_raw_data_format.py --data_root /path/to/mprov3_data
 ```
 
-### 1. Build the PyG dataset (`build_dataset.py`)
+### 2. Build the PyG dataset (`build_dataset.py`)
 
 **What it does:** Reads every ligand SDF and labels from `Info.csv`, builds one PyG graph per structure, and saves `data.pt` plus `pdb_order.txt` under `results/datasets/`. Training fails fast if this step was skipped.
 
@@ -294,7 +294,7 @@ uv run python build_dataset.py
 uv run python build_dataset.py --data_root /path/to/mprov3_data --results_root results
 ```
 
-#### 1.1. Validate built dataset (`check_PyG_data_format.py`)
+### 3. Validate built dataset (`check_PyG_data_format.py`)
 
 **What it does:** Loads `data.pt`, maps split PDB IDs to dataset indices, and checks label ranges and graph fields so training and test-set classification will not hit silent mismatches.
 
@@ -307,7 +307,7 @@ uv run python check_PyG_data_format.py
 uv run python check_PyG_data_format.py --splits_root /path/to/mprov3_data
 ```
 
-### 2. Visualize ligand graphs (`visualize_graphs.py`)
+### 4. Visualize ligand graphs (`visualize_graphs.py`)
 
 **What it does:** Draws each ligand with RDKit’s 2D drawer, using the built `data.pt` and the same CV plan as training (folds × train → val → test). Each graph file is written at most once; `index.html` can still list the same PDB under multiple fold/split headings. Categories use the original scale (-1, 0, 1); coordinates use x and y only for layout.
 
@@ -322,7 +322,7 @@ uv run python visualize_graphs.py --num-graphs-by-fold 32 --svg
 
 Outputs: `PDB_ID.png` (and optional `.svg`), `PDB_ID.html`, `index.html`, `visualize.log` under `results/visualizations/`.
 
-### 3. Train (`train.py`)
+### 5. Train (`train.py`)
 
 **What it does:** For each selected fold, loads train/val loaders from `results/datasets/data.pt` and split files under `data_root/Splits/`, trains `MProGNN` with cross-entropy, and saves the best checkpoint (by validation accuracy when validation is enabled, else best train accuracy). Writes `fold_<k>/training_metrics.json` and, after all folds, `training_summary.json` with best-fold indices (tie-break: lower fold index). Does not run inference on the test split.
 
@@ -366,7 +366,7 @@ uv run python train.py \
   --num_classes 3 --seed 42
 ```
 
-### 4. Classify test set (`classify.py`)
+### 6. Classify test set (`classify.py`)
 
 **What it does:** Loads `results/trainings/fold_<k>/<checkpoint>` (or legacy flat layout for fold 0), rebuilds the test loader for the same fold and splits, runs inference, and writes `fold_<k>/classification_results.json` with per-PDB labels in the original category scale (-1, 0, 1). Older runs may have `fold_<k>/evaluation_results.json`; the summary and report tools still discover that legacy name. Then refreshes `classification_summary.json` from every fold’s results JSON (best test fold, tie-break lower index).
 
@@ -389,7 +389,7 @@ uv run python classify.py
 uv run python classify.py --data_root /path/to/snapshot --fold_index 2 --hidden 64 --num_layers 3 --num_classes 3
 ```
 
-#### 4.1. Classification report (`create_classification_report.py`)
+### 7. Classification report (`create_classification_report.py`)
 
 **What it does:** Discovers `fold_*/classification_results.json` (or legacy `fold_*/evaluation_results.json`, or one path to a single JSON), loads graphs from `results/datasets/` to draw shared thumbnails, merges validation/train@best-val metrics from `results/trainings/` when available, and writes `index.html` (summary table with per-column bests, then one tab per fold), `graphs/*.png`, and per-PDB HTML next to the report root.
 

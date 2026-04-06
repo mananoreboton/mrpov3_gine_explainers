@@ -4,8 +4,6 @@ MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations 
 
 Artifacts go under **`mprov3_explainer/results/folds/fold_<k>/`**: **`explanations/<explainer>/`**, **`visualizations/<explainer>/graphs/`** (PNGs from the optional viz script). Re-running overwrites after an **`[INFO]`** line.
 
-**Shell orchestration:** [**`scripts/mprov3/README.md`**](../scripts/mprov3/README.md) runs **`run_explanations.py`** then **`generate_visualizations.py`**.
-
 ## Flow
 
 1. **Pick fold** – Read `mprov3_gine/results/classifications/classification_summary.json` (**test accuracy**, default) or `trainings/training_summary.json` (**train accuracy at best validation**). Requires **`classify.py`** and/or **`train.py`** to have written those summaries.
