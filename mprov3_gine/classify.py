@@ -1,8 +1,9 @@
 """
-Run test-set classification with a saved training checkpoint (independent of train.py).
+Run classification on the train or test split with a saved training checkpoint (independent of train.py).
 
+Uses default data/results roots, checkpoint name, and split filenames from mprov3_gine_explainer_defaults.
 Writes results/classifications/fold_<k>/classification_results.json and classification_summary.json.
-See README.md (Usage) and ``classify.py --help`` for flags (splits and architecture must match training).
+See README.md (Usage) and ``classify.py --help`` for flags (architecture must match training).
 """
 
 import argparse
@@ -11,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
+from torch_geometric.loader import DataLoader
 from mprov3_gine_explainer_defaults import (
     BUILT_DATASET_FOLDER_NAME,
     CLASSIFICATION_RESULTS_JSON,
@@ -31,13 +33,11 @@ from mprov3_gine_explainer_defaults import (
 
 from cli_common import (
     add_batch_size_arg,
-    add_checkpoint_arg,
-    add_data_and_results_roots,
     add_model_loader_args,
-    add_split_and_fold_args,
+    add_num_folds_and_fold_indices,
 )
 from classification import classify_test_with_predictions, print_test_classification_report
-from loaders import create_data_loaders
+from loaders import collate_batch, create_data_loaders
 from model import MProGNN
 from utils import FOLD_SUBDIR_NAME_RE, RunLogger, log_overwrite_if_exists
 
@@ -66,10 +66,12 @@ def scan_and_write_classification_summary(classifications_root: Path, log) -> No
     fold_entries: list[dict] = []
     for json_path in _fold_classification_json_paths(classifications_root):
         data = json.loads(json_path.read_text(encoding="utf-8"))
+        eval_split = str(data.get("eval_split", "test"))
         fold_entries.append(
             {
                 "fold_index": int(data["fold_index"]),
                 "test_accuracy": float(data["accuracy"]),
+                "eval_split": eval_split,
             }
         )
     fold_entries.sort(key=lambda x: x["fold_index"])
@@ -86,10 +88,13 @@ def scan_and_write_classification_summary(classifications_root: Path, log) -> No
         fold_entries,
         key=lambda f: (f["test_accuracy"], -f["fold_index"]),
     )["fold_index"]
-    out = {
+    splits = {f["eval_split"] for f in fold_entries}
+    out: dict = {
         "folds": fold_entries,
         "best_classification_fold_index": best_fold,
     }
+    if len(splits) == 1:
+        out["eval_split"] = next(iter(splits))
     summary_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
     log(
         f"Classification summary: best_classification_fold_index={best_fold} → {summary_path}"
@@ -99,25 +104,23 @@ def scan_and_write_classification_summary(classifications_root: Path, log) -> No
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Classify the test set with a trained GNN checkpoint "
-            "(independent of train.py)."
+            "Classify the train or test split with a trained GNN checkpoint "
+            "(independent of train.py). Paths and split filenames use package defaults."
         )
     )
-    add_data_and_results_roots(
-        parser,
-        results_help="reads trainings/ and datasets/, writes to classifications/.",
-        data_root_help="Path to raw MPro snapshot (Splits/); default: DEFAULT_DATA_ROOT",
-    )
-    add_checkpoint_arg(
-        parser,
-        help=f"Checkpoint filename (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}); under trainings/fold_<k>/ per fold.",
-    )
-    add_split_and_fold_args(
+    add_num_folds_and_fold_indices(
         parser,
         fold_indices_help=(
-            "Classify the test set for these fold indices only (e.g. one fold: --fold_indices 2). "
+            "Run classification for these fold indices only (e.g. one fold: --fold_indices 2). "
             "Default: all folds."
         ),
+    )
+    parser.add_argument(
+        "--eval_split",
+        type=str,
+        choices=("train", "test"),
+        default="test",
+        help="Which split to evaluate (default: test).",
     )
     add_batch_size_arg(parser, for_classification=True)
     add_model_loader_args(parser, for_classification=True)
@@ -126,8 +129,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    data_root = Path(args.data_root or DEFAULT_DATA_ROOT)
-    results_root = Path(args.results_root or DEFAULT_RESULTS_ROOT)
+    data_root = Path(DEFAULT_DATA_ROOT)
+    results_root = Path(DEFAULT_RESULTS_ROOT)
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
@@ -141,12 +144,9 @@ def main() -> None:
 
     for k in fold_list:
         checkpoint_path = resolve_checkpoint_path(
-            results_root, args.checkpoint, fold_index=k
+            results_root, DEFAULT_TRAINING_CHECKPOINT_FILENAME, fold_index=k
         )
         split_config = SplitConfig(
-            train_file=args.train_split_file,
-            val_file=args.val_split_file,
-            test_file=args.test_split_file,
             num_folds=args.num_folds,
             fold_index=k,
             dataset_name=dataset_name,
@@ -165,11 +165,21 @@ def main() -> None:
             log.log(f"Output: {out_dir}")
             log.log(f"Checkpoint: {checkpoint_path}")
             log.log(f"Dataset: {dataset_dir}")
+            log.log(f"Eval split: {args.eval_split}")
 
-            _, _, test_loader = create_data_loaders(
+            train_loader, _, test_loader = create_data_loaders(
                 dataset_base, data_root, split_config, batch_size=args.batch_size
             )
-            log.log(f"Test set size: {len(test_loader.dataset)}")
+            if args.eval_split == "train":
+                eval_loader = DataLoader(
+                    train_loader.dataset,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    collate_fn=collate_batch,
+                )
+            else:
+                eval_loader = test_loader
+            log.log(f"{args.eval_split} set size: {len(eval_loader.dataset)}")
 
             model = MProGNN(
                 in_channels=DEFAULT_IN_CHANNELS,
@@ -184,9 +194,11 @@ def main() -> None:
                 torch.load(checkpoint_path, map_location=device, weights_only=False)
             )
 
-            log.log(f"Running test-set classification (fold_index={k})")
-            test_metrics, results = classify_test_with_predictions(
-                model, test_loader, device
+            log.log(
+                f"Running classification on {args.eval_split} split (fold_index={k})"
+            )
+            eval_metrics, results = classify_test_with_predictions(
+                model, eval_loader, device
             )
 
             payload = {
@@ -194,9 +206,10 @@ def main() -> None:
                 "data_root": str(data_root.resolve()),
                 "results_root": str(results_root.resolve()),
                 "dataset_name": dataset_name,
+                "eval_split": args.eval_split,
                 "fold_index": k,
                 "num_folds": split_config.num_folds,
-                "accuracy": test_metrics.accuracy,
+                "accuracy": eval_metrics.accuracy,
                 "results": [
                     {"pdb_id": pdb_id, "real_category": real, "predicted_category": pred}
                     for pdb_id, real, pred in results
@@ -204,10 +217,10 @@ def main() -> None:
             }
             log_overwrite_if_exists(results_path, log.log)
             log.log(
-                f"Test accuracy (Category): {test_metrics.accuracy:.4f} "
+                f"Accuracy ({args.eval_split}, Category): {eval_metrics.accuracy:.4f} "
                 f"(fold_index={k})"
             )
-            print_test_classification_report(test_metrics)
+            print_test_classification_report(eval_metrics)
             results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             log.log(f"Results saved to {results_path}")
             log.log(f"Log written to {log_path}")

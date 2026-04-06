@@ -14,7 +14,6 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_RESULTS_ROOT,
     DEFAULT_TEST_SPLIT_FILE,
     DEFAULT_TRAIN_SPLIT_FILE,
-    DEFAULT_TRAINING_CHECKPOINT_FILENAME,
     DEFAULT_VAL_SPLIT_FILE,
 )
 
@@ -39,11 +38,7 @@ def add_data_and_results_roots(
     )
 
 
-def add_split_and_fold_args(
-    parser: argparse.ArgumentParser,
-    *,
-    fold_indices_help: str,
-) -> None:
+def add_split_file_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--train_split_file",
         type=str,
@@ -62,6 +57,13 @@ def add_split_and_fold_args(
         default=DEFAULT_TEST_SPLIT_FILE,
         help=f"Test split file in Splits/ (default: {DEFAULT_TEST_SPLIT_FILE})",
     )
+
+
+def add_num_folds_and_fold_indices(
+    parser: argparse.ArgumentParser,
+    *,
+    fold_indices_help: str,
+) -> None:
     parser.add_argument(
         "--num_folds",
         type=int,
@@ -78,13 +80,13 @@ def add_split_and_fold_args(
     )
 
 
-def add_checkpoint_arg(parser: argparse.ArgumentParser, *, help: str) -> None:
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=DEFAULT_TRAINING_CHECKPOINT_FILENAME,
-        help=help,
-    )
+def add_split_and_fold_args(
+    parser: argparse.ArgumentParser,
+    *,
+    fold_indices_help: str,
+) -> None:
+    add_split_file_args(parser)
+    add_num_folds_and_fold_indices(parser, fold_indices_help=fold_indices_help)
 
 
 def add_batch_size_arg(parser: argparse.ArgumentParser, *, for_classification: bool) -> None:
@@ -93,7 +95,7 @@ def add_batch_size_arg(parser: argparse.ArgumentParser, *, for_classification: b
             "--batch_size",
             type=int,
             default=DEFAULT_BATCH_SIZE,
-            help="Batch size for test-set classification",
+            help="Batch size for classification (train or test split per --eval_split)",
         )
     else:
         parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)

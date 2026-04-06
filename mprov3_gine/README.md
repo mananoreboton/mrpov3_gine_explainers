@@ -365,27 +365,27 @@ uv run python train.py \
   --seed 42
 ```
 
-### 6. Classify test set (`classify.py`)
+### 6. Classify train or test split (`classify.py`)
 
-**What it does:** Loads `results/trainings/fold_<k>/<checkpoint>` (or legacy flat layout for fold 0), rebuilds the test loader for the same fold and splits, runs inference, and writes `fold_<k>/classification_results.json` with per-PDB labels in the original category scale (-1, 0, 1). Older runs may have `fold_<k>/evaluation_results.json`; the summary and report tools still discover that legacy name. Then refreshes `classification_summary.json` from every fold’s results JSON (best test fold, tie-break lower index).
+**What it does:** Loads `results/trainings/fold_<k>/<DEFAULT_TRAINING_CHECKPOINT_FILENAME>` (or legacy flat layout for fold 0), rebuilds data loaders for the same fold using the default raw snapshot (`DEFAULT_DATA_ROOT`), default results root (`DEFAULT_RESULTS_ROOT`), and default split filenames under `Splits/` (same as `SplitConfig` defaults used in training). By default it evaluates the **test** split; pass `--eval_split train` to evaluate the training split instead (with `shuffle=False`). Writes `fold_<k>/classification_results.json` including `eval_split`, `accuracy`, and per-PDB labels in the original category scale (-1, 0, 1). Older runs may have `fold_<k>/evaluation_results.json`; the summary and report tools still discover that legacy name. Refreshes `classification_summary.json` from every fold’s JSON: each fold entry keeps the key `test_accuracy` for the numeric score (accuracy on whichever split was chosen at classify time), plus `eval_split`; when all folds agree, the summary also includes top-level `eval_split`. Best fold uses that score (tie-break: lower fold index).
 
 **CLI parameters**
 
 | Flag | Meaning | Default |
 |------|---------|---------|
-| `--data_root` | Raw snapshot (`Splits/`) | `DEFAULT_DATA_ROOT` |
-| `--results_root` | Reads trainings + datasets, writes `classifications/` | `DEFAULT_RESULTS_ROOT` |
-| `--checkpoint` | Checkpoint filename under each `trainings/fold_<k>/` | `DEFAULT_TRAINING_CHECKPOINT_FILENAME` |
-| `--train_split_file`, `--val_split_file`, `--test_split_file` | Same as training | `DEFAULT_*_SPLIT_FILE` |
+| `--eval_split` | `train` or `test` — which split to run inference on | `test` |
 | `--num_folds`, `--fold_indices` | Same semantics as training | all folds |
-| `--batch_size` | Test loader batch size | `DEFAULT_BATCH_SIZE` |
+| `--batch_size` | Loader batch size for the chosen split | `DEFAULT_BATCH_SIZE` |
 | `--hidden`, `--num_layers`, `--dropout`, `--num_classes` | Must match saved weights | same defaults as training |
+
+Paths, checkpoint filename, and split file names are not configurable on the CLI; they match `DEFAULT_DATA_ROOT`, `DEFAULT_RESULTS_ROOT`, `DEFAULT_TRAINING_CHECKPOINT_FILENAME`, and `DEFAULT_*_SPLIT_FILE` from `mprov3_gine_explainer_defaults`.
 
 **Examples**
 
 ```bash
 uv run python classify.py
-uv run python classify.py --data_root /path/to/snapshot --fold_indices 2 --hidden 64 --num_layers 3 --num_classes 3
+uv run python classify.py --fold_indices 2 --hidden 64 --num_layers 3 --num_classes 3
+uv run python classify.py --eval_split train
 ```
 
 ### 7. Classification report (`create_classification_report.py`)
@@ -512,7 +512,7 @@ print_test_classification_report(test_metrics)
 | **model.py**                    | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`).                                                                                        |
 | **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
 | **utils.py**                    | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger`, `FOLD_SUBDIR_NAME_RE` (matches `fold_<k>/` directory names).           |
-| **cli_common.py**               | Shared argparse helpers used by `train.py` and `classify.py` (paths, splits/`--fold_indices`, checkpoint for classify only, batch size, GINE hyperparameters).                                                |
+| **cli_common.py**               | Shared argparse helpers used by `train.py` and `classify.py` (paths and split files for training; fold indices only for classify; batch size; GINE hyperparameters).                                                |
 | **build_dataset.py**            | Builds PyG dataset to `results/datasets/`; writes `build.log`.                                                                                                                      |
 | **check_raw_data_format.py**    | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/check_input.log`.                                                                               |
 | **check_PyG_data_format.py**    | CLI: validate built dataset at `results/datasets/data.pt` by default; writes `results/check_format/datasets/check_output.log`.                                                      |
@@ -521,7 +521,7 @@ print_test_classification_report(test_metrics)
 | **validation.py**               | Validation: `evaluate_validation`, `ValidationMetrics`.                                                                                                                             |
 | **classification.py**           | Test-set classification: `classify_test`, `classify_test_with_predictions`, `TestMetrics`, `print_test_classification_report`.                                                      |
 | **train.py**                    | CLI: load `results/datasets/data.pt`, train; save checkpoints and `fold_<k>/training_metrics.json`, `training_summary.json`, and `train.log` under `results/trainings/`. |
-| **classify.py**                 | CLI: load `results/trainings/fold_<k>/` checkpoint, classify test set; save `fold_<k>/classification_results.json`, `classification_summary.json`, and `classify.log` under `results/classifications/`. |
+| **classify.py**                 | CLI: load default checkpoint under `results/trainings/fold_<k>/`, classify train or test split (`--eval_split`); save `fold_<k>/classification_results.json`, `classification_summary.json`, and `classify.log` under `results/classifications/`. |
 | **create_classification_report.py** | CLI: read per-fold classification JSON (including legacy `evaluation_results.json`), optional `--folds`; merge training metrics from `trainings/`; write `index.html` (summary table + tabs), `graphs/`, per-PDB HTML; `create_classification_report.log`. |
 | **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`.   |
 
