@@ -6,8 +6,12 @@ comparison_report.json (no HTML).
 
 Usage:
   uv run python scripts/run_explanations.py
+  uv run python scripts/run_explanations.py --split validation
   uv run python scripts/run_explanations.py --fold_metric train_accuracy
   uv run python scripts/run_explanations.py --no_mask_spread_filter
+
+GNN results are read from ``mprov3_gine/results`` and the MPro snapshot from the workspace
+default directory (see ``DEFAULT_MPRO_SNAPSHOT_DIR_NAME`` in mprov3_gine_explainer_defaults).
 """
 
 from __future__ import annotations
@@ -71,20 +75,17 @@ from mprov3_explainer.explainers import get_spec
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run all explainers on the best fold (test accuracy from classify.py by default)."
+            "Run all explainers on the best fold (test accuracy from classify.py by default). "
+            "Uses mprov3_gine/results and the default MPro snapshot path; "
+            "PGExplainer still trains on the train split, then explains the split from --split."
         ),
     )
     parser.add_argument(
-        "--results_root",
+        "--split",
         type=str,
-        default=None,
-        help="mprov3_gine results (trainings/, classifications/, datasets/).",
-    )
-    parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="Raw MPro snapshot (Splits/).",
+        choices=("train", "validation", "test"),
+        default="test",
+        help="Data split whose loader is used for the explanation loop (default: test).",
     )
     parser.add_argument(
         "--fold_metric",
@@ -111,18 +112,19 @@ def main() -> None:
     for name in AVAILABLE_EXPLAINERS:
         validate_explainer(name)
 
-    results_root = Path(args.results_root) if args.results_root else _GNN_PROJECT_ROOT / RESULTS_DIR_NAME
+    results_root = _GNN_PROJECT_ROOT / RESULTS_DIR_NAME
     if not results_root.exists():
         raise FileNotFoundError(f"Results root not found: {results_root}")
 
     k = resolve_best_fold_index(results_root, args.fold_metric)
     num_folds = read_num_folds_for_fold(results_root, k)
     print(
-        f"Using fold_index={k} (num_folds={num_folds}, fold_metric={args.fold_metric})",
+        f"Using fold_index={k} (num_folds={num_folds}, fold_metric={args.fold_metric}, "
+        f"split={args.split})",
         flush=True,
     )
 
-    data_root = Path(args.data_root) if args.data_root else _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
+    data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
 
@@ -147,9 +149,15 @@ def main() -> None:
         fold_index=k,
         dataset_name=dataset_name,
     )
-    train_loader, _, test_loader = create_data_loaders(
+    train_loader, val_loader, test_loader = create_data_loaders(
         dataset_base, data_root, split_config, batch_size=DEFAULT_BATCH_SIZE,
     )
+    split_loaders = {
+        "train": train_loader,
+        "validation": val_loader,
+        "test": test_loader,
+    }
+    explain_loader = split_loaders[args.split]
 
     model = MProGNN(
         in_channels=DEFAULT_IN_CHANNELS,
@@ -194,7 +202,7 @@ def main() -> None:
         results: list = []
         for result in run_explanations(
             model,
-            test_loader,
+            explain_loader,
             device,
             explainer_name=explainer_name,
             explainer_epochs=epochs_for_builder,
@@ -323,6 +331,7 @@ def main() -> None:
         "generated_at": generated_at,
         "fold_index": k,
         "fold_metric": args.fold_metric,
+        "split": args.split,
         "explainers": explainer_names,
         "per_explainer": all_summaries,
         "per_graph_per_explainer": all_per_graph,

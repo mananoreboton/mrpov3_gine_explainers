@@ -5,7 +5,8 @@ No HTML, no HTTP server, no multi-fold report.
 
 Usage:
   uv run python scripts/generate_visualizations.py
-  uv run python scripts/generate_visualizations.py --results_root /path/to/mprov3_explainer/results
+
+Reads ``mprov3_explainer/results`` and ligand SDFs from the workspace default MPro snapshot.
 """
 
 from __future__ import annotations
@@ -37,19 +38,10 @@ def _parse_args():
     import argparse
 
     p = argparse.ArgumentParser(
-        description="Write mask PNGs from one fold of explainer outputs (RDKit only).",
-    )
-    p.add_argument(
-        "--results_root",
-        type=str,
-        default=None,
-        help="mprov3_explainer/results (expects folds/fold_*/explanations/).",
-    )
-    p.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="Raw MPro snapshot (ligand SDFs).",
+        description=(
+            "Write mask PNGs from one fold of explainer outputs (RDKit only). "
+            "Uses mprov3_explainer/results and the default MPro snapshot path."
+        ),
     )
     return p.parse_args()
 
@@ -109,8 +101,8 @@ def _explainers_in_fold(explanations_base: Path) -> list[str]:
 
 
 def main() -> None:
-    args = _parse_args()
-    results_root = Path(args.results_root or _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME)
+    _parse_args()
+    results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
     if not results_root.exists():
         raise FileNotFoundError(f"Results root not found: {results_root}")
 
@@ -122,7 +114,7 @@ def main() -> None:
     for n in explainer_names:
         validate_explainer(n)
 
-    data_root = Path(args.data_root) if args.data_root else _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
+    data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
     if not data_root.exists():
         raise FileNotFoundError(f"Data root not found: {data_root}")
     sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
