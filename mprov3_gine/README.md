@@ -4,7 +4,7 @@ Python pipeline to train a Graph Neural Network on the MPro-URV Version 3 snapsh
 
 **Shared defaults:** Training, fold, GINE architecture, path segment names, `**SplitConfig`**, `**DEFAULT_DATA_ROOT**`, `**DEFAULT_RESULTS_ROOT**`, and sibling project `**Path`s (`WORKSPACE_ROOT**`, `**GINE_PROJECT_DIR**`, …) come from `**mprov3_gine_explainer_defaults**` (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is `**MProGNN**` in `**model.py**`.
 
-**End-to-end check:** From the repository root, run [`check_all.sh`](../check_all.sh) to run `uv sync`, validate shared defaults, the `mprov3_gine` pipeline (README steps 1–7 below with default paths), and the explainer scripts in [`mprov3_explainer`](../mprov3_explainer/README.md). Override training length with `GNN_TRAIN_EPOCHS` (see `check_all.sh` header). For explainer-only flags (e.g. **`--include-misclassified`**), see `mprov3_explainer` CLI help.
+**End-to-end GNN pipeline:** From `mprov3_gine/`, run `./run_pipeline.sh` to execute README steps 1–7 below with default paths and no extra CLI flags (after `uv sync` here). For explainer scripts and flags (e.g. **`--include-misclassified`**), see [`mprov3_explainer`](../mprov3_explainer/README.md) and run `uv sync` in `mprov3_gine_explainer_defaults`, `mprov3_gine`, and `mprov3_explainer` as needed.
 
 ## Overview
 
