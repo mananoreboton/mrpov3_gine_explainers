@@ -1,10 +1,10 @@
 """
-Create an HTML report for a previous run of evaluate.py.
+Create an HTML report for a previous run of classify.py.
 
-Scans results/classifications/ for fold_*/evaluation_results.json (or legacy flat
-evaluation_results.json), loads validation metrics from results/trainings/ when available,
+Scans results/classifications/ for fold_*/classification_results.json (or legacy
+fold_*/evaluation_results.json), loads validation metrics from results/trainings/ when available,
 writes index.html (fold score table + one tab per fold), graphs/, and per-sample HTML.
-A path to a single evaluation_results.json is also accepted (report written next to that file).
+A path to a single classification_results.json (or legacy evaluation_results.json) is also accepted.
 """
 
 from __future__ import annotations
@@ -18,7 +18,9 @@ import torch
 
 from mprov3_gine_explainer_defaults import (
     BUILT_DATASET_FOLDER_NAME,
+    CLASSIFICATION_RESULTS_JSON,
     DEFAULT_RESULTS_ROOT,
+    LEGACY_EVALUATION_RESULTS_JSON,
     PYG_DATA_FILENAME,
     PYG_PDB_ORDER_FILENAME,
     RESULTS_CLASSIFICATIONS,
@@ -168,19 +170,27 @@ class LoadedFold(NamedTuple):
     payload: dict[str, Any]
 
 
-def discover_evaluation_json_paths(classifications_dir: Path) -> List[Path]:
-    """Paths to evaluation_results.json under fold_*; else legacy flat file."""
-    fold_paths: List[tuple[int, Path]] = []
-    for p in classifications_dir.glob("fold_*/evaluation_results.json"):
+def discover_classification_json_paths(classifications_dir: Path) -> List[Path]:
+    """Per-fold JSON paths; prefer classification_results.json; else legacy evaluation_results.json."""
+    by_fold: dict[int, Path] = {}
+    for p in classifications_dir.glob(f"fold_*/{CLASSIFICATION_RESULTS_JSON}"):
         m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
         if m:
-            fold_paths.append((int(m.group(1)), p))
-    fold_paths.sort(key=lambda x: x[0])
-    paths = [p for _, p in fold_paths]
+            by_fold[int(m.group(1))] = p
+    for p in classifications_dir.glob(f"fold_*/{LEGACY_EVALUATION_RESULTS_JSON}"):
+        m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
+        if m:
+            k = int(m.group(1))
+            if k not in by_fold:
+                by_fold[k] = p
+    paths = [by_fold[k] for k in sorted(by_fold)]
     if not paths:
-        legacy = classifications_dir / "evaluation_results.json"
-        if legacy.is_file():
-            paths.append(legacy)
+        legacy_c = classifications_dir / CLASSIFICATION_RESULTS_JSON
+        legacy_e = classifications_dir / LEGACY_EVALUATION_RESULTS_JSON
+        if legacy_c.is_file():
+            paths.append(legacy_c)
+        elif legacy_e.is_file():
+            paths.append(legacy_e)
     return paths
 
 
@@ -222,7 +232,7 @@ def _apply_fold_filter(
     missing = sorted(wanted - have)
     if missing:
         raise FileNotFoundError(
-            f"No evaluation_results.json for fold(s) {missing} "
+            f"No classification results JSON for fold(s) {missing} "
             f"(available: {sorted({f.fold_index for f in folds})})"
         )
     return filtered
@@ -235,7 +245,7 @@ def _write_sample_page(
     pred_cat: int,
     correct: bool,
 ) -> None:
-    """Write one HTML page for a single evaluation sample."""
+    """Write one HTML page for a single classified sample."""
     img_rel = f"graphs/{html_escape(pdb_id)}.png"
     status_class = "correct" if correct else "wrong"
     status_text = "Correct" if correct else "Incorrect"
@@ -248,7 +258,7 @@ def _write_sample_page(
         "<p><a href='index.html'>← Back to index</a></p>",
     ]
     html = html_document(
-        f"Evaluation: {html_escape(pdb_id)}",
+        f"Classification: {html_escape(pdb_id)}",
         body,
         style="body { font-family: sans-serif; } .correct { color: green; } .wrong { color: red; }",
     )
@@ -286,7 +296,7 @@ def _write_index_html_folds(
     training_by_fold: dict[int, dict[str, Any]],
 ) -> None:
     """
-    fold_rows: (fold_index, eval_timestamp, accuracy, written entries per fold).
+    fold_rows: (fold_index, classification_timestamp, accuracy, written entries per fold).
     training_by_fold: from trainings/ JSON (validation + train@best val); may be empty.
     """
     style = (
@@ -323,27 +333,27 @@ def _write_index_html_folds(
         ".fold-tabpanel { padding-top: 0.5em; } "
         ".fold-tabpanel[hidden] { display: none !important; } "
     )
-    body: List[str] = ["<h1>Evaluation report</h1>"]
+    body: List[str] = ["<h1>Classification report</h1>"]
     body.extend(_summary_table_html(fold_rows, training_by_fold))
     use_tabs = len(fold_rows) > 0
 
     if use_tabs:
-        body.append('<div class="fold-tabs" id="eval-fold-tabs-root">')
+        body.append('<div class="fold-tabs" id="classif-fold-tabs-root">')
         body.append('<div role="tablist" class="fold-tablist" aria-label="CV fold">')
         for i, (fold_k, _ts, acc, entries) in enumerate(fold_rows):
-            panel_id = f"eval-fold-{fold_k}"
+            panel_id = f"classif-fold-{fold_k}"
             n = len(entries)
             sel = "true" if i == 0 else "false"
             body.append(
                 f'<button type="button" role="tab" id="tab-{html_escape(panel_id)}" '
                 f'aria-controls="{html_escape(panel_id)}" aria-selected="{sel}" '
-                f'data-eval-panel="{html_escape(panel_id)}">'
+                f'data-classif-panel="{html_escape(panel_id)}">'
                 f"Fold {fold_k} (n={n}, acc={acc:.4f})</button>"
             )
         body.append("</div>")
 
-        for i, (fold_k, eval_timestamp, accuracy, entries) in enumerate(fold_rows):
-            panel_id = f"eval-fold-{fold_k}"
+        for i, (fold_k, classif_timestamp, accuracy, entries) in enumerate(fold_rows):
+            panel_id = f"classif-fold-{fold_k}"
             hidden = "" if i == 0 else " hidden"
             labelled_by = f"tab-{html_escape(panel_id)}"
             body.append(
@@ -352,7 +362,7 @@ def _write_index_html_folds(
             )
             body.append(f"<h2 class='fold-section'>Fold {fold_k}</h2>")
             body.append(
-                f"<p class='timestamp'>Evaluation run: {html_escape(eval_timestamp)}</p>"
+                f"<p class='timestamp'>Classification run: {html_escape(classif_timestamp)}</p>"
             )
             body.append(
                 f"<p class='accuracy'><strong>Test accuracy</strong>: {accuracy:.4f}</p>"
@@ -364,29 +374,31 @@ def _write_index_html_folds(
         body.append(
             "<script>"
             "(function(){"
-            "var root=document.getElementById('eval-fold-tabs-root');"
+            "var root=document.getElementById('classif-fold-tabs-root');"
             "if(!root)return;"
-            "var tabs=root.querySelectorAll('[role=tab][data-eval-panel]');"
+            "var tabs=root.querySelectorAll('[role=tab][data-classif-panel]');"
             "var panels=root.querySelectorAll('[role=tabpanel]');"
             "function show(id){"
             "panels.forEach(function(p){var on=(p.id===id);p.hidden=!on;});"
-            "tabs.forEach(function(t){var on=(t.getAttribute('data-eval-panel')===id);"
+            "tabs.forEach(function(t){var on=(t.getAttribute('data-classif-panel')===id);"
             "t.setAttribute('aria-selected',on?'true':'false');});"
             "}"
             "tabs.forEach(function(t){"
-            "t.addEventListener('click',function(){show(t.getAttribute('data-eval-panel'));});"
+            "t.addEventListener('click',function(){show(t.getAttribute('data-classif-panel'));});"
             "});"
             "}());"
             "</script>"
         )
 
-    html = html_document("Evaluation report — MPro test set", body, style=style)
+    html = html_document("Classification report — MPro test set", body, style=style)
     (out_dir / "index.html").write_text(html, encoding="utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Create HTML report from evaluate.py outputs (evaluation_results.json per fold)."
+        description=(
+            "Create HTML report from classify.py outputs (classification_results.json per fold)."
+        )
     )
     parser.add_argument(
         "--classifications-dir",
@@ -394,8 +406,9 @@ def main() -> None:
         default=None,
         metavar="PATH",
         help=(
-            "Directory with fold_*/evaluation_results.json (default: results/classifications "
-            "under DEFAULT_RESULTS_ROOT), or a path to a single evaluation_results.json."
+            f"Directory with fold_*/{CLASSIFICATION_RESULTS_JSON} (default: results/classifications "
+            f"under DEFAULT_RESULTS_ROOT), or a path to a single {CLASSIFICATION_RESULTS_JSON} "
+            f"(or legacy {LEGACY_EVALUATION_RESULTS_JSON})."
         ),
     )
     parser.add_argument(
@@ -420,24 +433,30 @@ def main() -> None:
 
     target = target.resolve()
 
-    if target.is_file() and target.name == "evaluation_results.json":
+    if target.is_file() and target.name in (
+        CLASSIFICATION_RESULTS_JSON,
+        LEGACY_EVALUATION_RESULTS_JSON,
+    ):
         report_dir = target.parent
         folds = _load_folds_for_targets([target])
         folds = _apply_fold_filter(folds, args.folds)
     elif target.is_dir():
         report_dir = target
-        paths = discover_evaluation_json_paths(target)
+        paths = discover_classification_json_paths(target)
         if not paths:
             raise FileNotFoundError(
-                f"No evaluation_results.json under {target}. "
-                "Expected fold_*/evaluation_results.json or evaluation_results.json. "
-                "Run evaluate.py first."
+                f"No classification results JSON under {target}. "
+                f"Expected fold_*/{CLASSIFICATION_RESULTS_JSON} or legacy "
+                f"fold_*/{LEGACY_EVALUATION_RESULTS_JSON}, or a flat "
+                f"{CLASSIFICATION_RESULTS_JSON} / {LEGACY_EVALUATION_RESULTS_JSON}. "
+                "Run classify.py first."
             )
         folds = _load_folds_for_targets(paths)
         folds = _apply_fold_filter(folds, args.folds)
     else:
         raise FileNotFoundError(
-            f"Not a directory or evaluation_results.json file: {target}"
+            f"Not a directory or {CLASSIFICATION_RESULTS_JSON} / "
+            f"{LEGACY_EVALUATION_RESULTS_JSON} file: {target}"
         )
 
     if not folds:
@@ -486,7 +505,7 @@ def main() -> None:
 
     graphs_dir = report_dir / "graphs"
     graphs_dir.mkdir(parents=True, exist_ok=True)
-    log_path = report_dir / "create_evaluation_report.log"
+    log_path = report_dir / "create_classification_report.log"
 
     pdb_union: set[str] = set()
     for lf in folds:
@@ -531,7 +550,7 @@ def main() -> None:
         for lf in folds:
             results_list: List[dict] = lf.payload["results"]
             accuracy = float(lf.payload["accuracy"])
-            eval_timestamp = lf.payload.get("timestamp", "unknown")
+            classif_timestamp = lf.payload.get("timestamp", "unknown")
             written: List[dict] = []
 
             for rec in results_list:
@@ -552,7 +571,7 @@ def main() -> None:
                 written.append(rec)
 
             log.log(f"Fold {lf.fold_index}: {len(written)} sample pages")
-            fold_rows.append((lf.fold_index, eval_timestamp, accuracy, written))
+            fold_rows.append((lf.fold_index, classif_timestamp, accuracy, written))
 
         _write_index_html_folds(report_dir, fold_rows, training_by_fold)
         log.log(f"Index: {report_dir / 'index.html'}")

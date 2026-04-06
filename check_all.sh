@@ -158,11 +158,11 @@ run_uv_python "$GNN_DIR" "§2 visualize_graphs.py" visualize_graphs.py --num-gra
 section "3. mprov3_gine — §3 train.py (epochs=$GNN_TRAIN_EPOCHS, fold 0)"
 run_uv_python "$GNN_DIR" "§3 train.py" train.py --epochs "$GNN_TRAIN_EPOCHS" --fold_index 0
 
-section "3. mprov3_gine — §4 evaluate.py (fold 0)"
-run_uv_python "$GNN_DIR" "§4 evaluate.py" evaluate.py --fold_index 0
+section "3. mprov3_gine — §4 classify.py (fold 0)"
+run_uv_python "$GNN_DIR" "§4 classify.py" classify.py --fold_index 0
 
-section "3. mprov3_gine — §4.1 create_evaluation_report.py (defaults)"
-run_uv_python "$GNN_DIR" "§4.1 create_evaluation_report.py" create_evaluation_report.py
+section "3. mprov3_gine — §4.1 create_classification_report.py (defaults)"
+run_uv_python "$GNN_DIR" "§4.1 create_classification_report.py" create_classification_report.py
 
 # =============================================================================
 # 4. mprov3_explainer — explanations then visualizations (order required)

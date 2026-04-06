@@ -194,7 +194,7 @@ Implement this in mprov3_explainer (e.g. a new module visualize.py or inside an 
 **`generate_visualizations` (`mprov3_explainer/scripts/generate_visualizations.py`).** Reads `explanation_report.json` and the saved mask JSON files under `masks/`, resolves SDF paths, draws PNGs, and writes `index.html`.
 
 5. **Index page content and layout.** Data source: same as `explanation_report.json`: `mean_fidelity_plus`, `mean_fidelity_minus`, `num_graphs`, `per_graph` (`graph_id`, `fidelity_plus`, `fidelity_minus`, `auroc`, etc.).
-**Structure:** Title (e.g. “Explanation report”). Summary: run timestamp, mean fid+, mean fid−, num graphs. Grid/list of cards per graph: `pdb_id`, metrics, thumbnail linking to `graphs/mask_<pdb_id>.png`. Reuse styling patterns from `mprov3_gine/create_evaluation_report.py` where useful; escape HTML.
+**Structure:** Title (e.g. “Explanation report”). Summary: run timestamp, mean fid+, mean fid−, num graphs. Grid/list of cards per graph: `pdb_id`, metrics, thumbnail linking to `graphs/mask_<pdb_id>.png`. Reuse styling patterns from `mprov3_gine/create_classification_report.py` where useful; escape HTML.
 
 6. **Implementation (current repo).** Visualization and HTML helpers live under `mprov3_explainer/src/mprov3_explainer/` (e.g. `visualize.py`). **`scripts/run_explanations.py`** writes `explanation_report.json` and **`masks/<pdb_id>.json`** per graph. **`scripts/generate_visualizations.py`** accepts `--timestamp` (default: latest), `--data_root`, `--results_root`, loads each mask file, draws PNGs, and writes **`results/visualizations/<timestamp>/<explainer>/`**. RDKit is listed in `mprov3_explainer` dependencies.
 

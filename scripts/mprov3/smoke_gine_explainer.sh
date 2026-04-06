@@ -33,13 +33,13 @@ run_gine_py visualize_graphs.py --num-graphs-by-fold 1
 echo "==> train.py (fold_index=$fold, epochs=${GNN_TRAIN_EPOCHS:-1})"
 run_gine_py train.py --num_folds "$nf" --fold_index "$fold" --epochs "${GNN_TRAIN_EPOCHS:-1}"
 
-echo "==> evaluate.py (fold_index=$fold)"
-run_gine_py evaluate.py --num_folds "$nf" --fold_index "$fold"
+echo "==> classify.py (fold_index=$fold)"
+run_gine_py classify.py --num_folds "$nf" --fold_index "$fold"
 
-echo "==> create_evaluation_report.py"
-run_gine_py create_evaluation_report.py
+echo "==> create_classification_report.py"
+run_gine_py create_classification_report.py
 
-echo "==> run_explanations.py (best fold = test accuracy from evaluate.py summary)"
+echo "==> run_explanations.py (best fold = test accuracy from classify.py summary)"
 run_mex_py scripts/run_explanations.py --results_root "$GNN_DIR/results"
 
 echo "==> generate_visualizations.py"

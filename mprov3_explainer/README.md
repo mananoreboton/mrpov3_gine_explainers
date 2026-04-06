@@ -1,6 +1,6 @@
 # mprov3-explainer
 
-MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations of the trained GINE classifier. Loads the model and dataset from **mprov3_gine/results**, runs **all** registered explainers on the **single best CV fold** (chosen from summaries produced by **evaluate.py** or **train.py**), and follows the **common representation** from *"Explaining the Explainers in Graph Neural Networks: a Comparative Study"* (Longa et al.): **(1) explanation masks** and **(2) preprocessing** (filtering, normalization) before metrics.
+MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations of the trained GINE classifier. Loads the model and dataset from **mprov3_gine/results**, runs **all** registered explainers on the **single best CV fold** (chosen from summaries produced by **classify.py** or **train.py**), and follows the **common representation** from *"Explaining the Explainers in Graph Neural Networks: a Comparative Study"* (Longa et al.): **(1) explanation masks** and **(2) preprocessing** (filtering, normalization) before metrics.
 
 Artifacts go under **`mprov3_explainer/results/folds/fold_<k>/`**: **`explanations/<explainer>/`**, **`visualizations/<explainer>/graphs/`** (PNGs from the optional viz script). Re-running overwrites after an **`[INFO]`** line.
 
@@ -8,7 +8,7 @@ Artifacts go under **`mprov3_explainer/results/folds/fold_<k>/`**: **`explanatio
 
 ## Flow
 
-1. **Pick fold** – Read `mprov3_gine/results/classifications/classification_summary.json` (**test accuracy**, default) or `trainings/training_summary.json` (**train accuracy at best validation**). Requires **`evaluate.py`** and/or **`train.py`** to have written those summaries.
+1. **Pick fold** – Read `mprov3_gine/results/classifications/classification_summary.json` (**test accuracy**, default) or `trainings/training_summary.json` (**train accuracy at best validation**). Requires **`classify.py`** and/or **`train.py`** to have written those summaries.
 2. **Resolve paths** – Checkpoint `trainings/fold_<k>/best_gnn.pt`, `datasets/data.pt`; splits from `data_root/Splits/`.
 3. **Load model** – `MProGNN` with defaults from **`mprov3_gine_explainer_defaults`** (must match training).
 4. **Explainers** – All entries in **`AVAILABLE_EXPLAINERS`**; **PGEXPL** trains on the train loader, then explains the test set.

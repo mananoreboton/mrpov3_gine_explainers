@@ -695,7 +695,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Validate that results/datasets/data.pt (flat layout) is compatible with "
-            "training and evaluation. Optional --data_root points at the folder that "
+            "training and test-set classification. Optional --data_root points at the folder that "
             "directly contains data.pt, or at a legacy per-run subfolder under datasets/."
         )
     )

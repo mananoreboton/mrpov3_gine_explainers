@@ -154,9 +154,9 @@ def _parse_args() -> argparse.Namespace:
         help=f"Checkpoint filename under each trainings/fold_<k>/ (default: {DEFAULT_TRAINING_CHECKPOINT_FILENAME}).",
     )
     parser.add_argument("--epochs", type=int, default=DEFAULT_TRAINING_EPOCHS)
-    add_batch_size_arg(parser, for_evaluation=False)
+    add_batch_size_arg(parser, for_classification=False)
     parser.add_argument("--lr", type=float, default=DEFAULT_TRAINING_LR)
-    add_model_loader_args(parser, for_evaluation=False)
+    add_model_loader_args(parser, for_classification=False)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument(
         "--no_validation",

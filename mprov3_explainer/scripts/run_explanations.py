@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run all explainers on the trained GINE for the single best CV fold (from evaluate.py or train.py
+Run all explainers on the trained GINE for the single best CV fold (from classify.py or train.py
 summaries). Writes per-explainer reports under results/folds/fold_<k>/explanations/ and
 comparison_report.json (no HTML).
 
@@ -71,7 +71,7 @@ from mprov3_explainer.explainers import get_spec
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run all explainers on the best fold (test accuracy from evaluate.py by default)."
+            "Run all explainers on the best fold (test accuracy from classify.py by default)."
         ),
     )
     parser.add_argument(

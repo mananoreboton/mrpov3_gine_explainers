@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full mprov3_gine chain (check_all.sh §3) for one CV fold: raw check → build → PyG check →
-# visualize one graph → train → evaluate → HTML report.
+# visualize one graph → train → classify test set → HTML report.
 #
 # Usage:
 #   ./scripts/mprov3/run_gine_fold.sh <fold_index>
@@ -35,8 +35,8 @@ run_gine_py visualize_graphs.py --num-graphs-by-fold 1
 echo "==> train.py (fold_index=$fold, epochs=${GNN_TRAIN_EPOCHS:-1})"
 run_gine_py train.py --num_folds "$nf" --fold_index "$fold" --epochs "${GNN_TRAIN_EPOCHS:-1}"
 
-echo "==> evaluate.py (fold_index=$fold)"
-run_gine_py evaluate.py --num_folds "$nf" --fold_index "$fold"
+echo "==> classify.py (fold_index=$fold)"
+run_gine_py classify.py --num_folds "$nf" --fold_index "$fold"
 
-echo "==> create_evaluation_report.py (all evaluated folds under classifications/)"
-run_gine_py create_evaluation_report.py
+echo "==> create_classification_report.py (all classified folds under classifications/)"
+run_gine_py create_classification_report.py

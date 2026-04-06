@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Train and evaluate every fold (0 .. NUM_FOLDS-1), then run explainers once for the best fold.
+# Train and classify the test set for every fold (0 .. NUM_FOLDS-1), then run explainers once for the best fold.
 #
 # Usage:
 #   ./scripts/mprov3/run_all_folds.sh

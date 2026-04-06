@@ -12,7 +12,7 @@ Run from the **repository root**:
 
 **GINE** (per fold when applicable):
 
-1. `build_dataset.py` → `check_PyG_data_format.py` → `visualize_graphs.py --num-graphs-by-fold 1` → `train.py` → `evaluate.py` → `create_evaluation_report.py`
+1. `build_dataset.py` → `check_PyG_data_format.py` → `visualize_graphs.py --num-graphs-by-fold 1` → `train.py` → `classify.py` → `create_classification_report.py`
 
 For **`visualize_graphs.py`**, `--num-graphs-by-fold 1` caps smoke-style previews; omit the flag for a full split-ordered run.
 

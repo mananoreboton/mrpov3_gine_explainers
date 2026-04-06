@@ -1,7 +1,9 @@
 """
-Evaluation logic: run model on a dataset (e.g. test set) and compute classification metrics.
-Provides evaluate_test(), evaluate_test_with_predictions(), TestMetrics, and print_test_report.
-Categories are reported in original scale (-1, 0, 1); model uses class indices (0, 1, 2).
+Test-set classification: run the model on a loader (e.g. test) and compute metrics.
+
+Provides classify_test(), classify_test_with_predictions(), TestMetrics, and
+print_test_classification_report. Categories are reported in original scale (-1, 0, 1);
+the model uses class indices (0, 1, 2).
 """
 
 from dataclasses import dataclass
@@ -22,23 +24,23 @@ class TestMetrics:
     accuracy: float
 
 
-def evaluate_test(
+def classify_test(
     model: MProGNN,
     loader: DataLoader,
     device: torch.device,
 ) -> TestMetrics:
-    """Compute test accuracy."""
+    """Compute test-set classification accuracy."""
     metrics = evaluate_validation(model, loader, device)
     return TestMetrics(accuracy=metrics.accuracy)
 
 
-def evaluate_test_with_predictions(
+def classify_test_with_predictions(
     model: MProGNN,
     loader: DataLoader,
     device: torch.device,
 ) -> Tuple[TestMetrics, List[Tuple[str, int, int]]]:
     """
-    Run model on test set and return metrics plus per-sample results.
+    Run the model on the loader and return metrics plus per-sample results.
 
     Returns:
         (TestMetrics, list of (pdb_id, real_category, predicted_category))
@@ -81,6 +83,6 @@ def evaluate_test_with_predictions(
     return metrics, results
 
 
-def print_test_report(metrics: TestMetrics) -> None:
-    """Print test accuracy to stdout."""
+def print_test_classification_report(metrics: TestMetrics) -> None:
+    """Print test-set classification accuracy to stdout."""
     print(f"Test accuracy (Category): {metrics.accuracy:.4f}")

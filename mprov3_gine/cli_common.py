@@ -1,4 +1,4 @@
-"""Shared argparse pieces for train.py and evaluate.py."""
+"""Shared argparse pieces for train.py and classify.py."""
 
 from __future__ import annotations
 
@@ -95,23 +95,23 @@ def add_checkpoint_arg(parser: argparse.ArgumentParser, *, help: str) -> None:
     )
 
 
-def add_batch_size_arg(parser: argparse.ArgumentParser, *, for_evaluation: bool) -> None:
-    if for_evaluation:
+def add_batch_size_arg(parser: argparse.ArgumentParser, *, for_classification: bool) -> None:
+    if for_classification:
         parser.add_argument(
             "--batch_size",
             type=int,
             default=DEFAULT_BATCH_SIZE,
-            help="Batch size for evaluation",
+            help="Batch size for test-set classification",
         )
     else:
         parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
 
 
 def add_model_loader_args(
-    parser: argparse.ArgumentParser, *, for_evaluation: bool
+    parser: argparse.ArgumentParser, *, for_classification: bool
 ) -> None:
     match_kw: dict = {}
-    if for_evaluation:
+    if for_classification:
         match_kw = {"help": "Must match trained model"}
     parser.add_argument(
         "--hidden", type=int, default=DEFAULT_HIDDEN_CHANNELS, **match_kw
@@ -124,7 +124,7 @@ def add_model_loader_args(
     )
     num_cls_help = (
         f"Number of classes (Category, default: {DEFAULT_OUT_CLASSES})"
-        if not for_evaluation
+        if not for_classification
         else f"Number of classes (default: {DEFAULT_OUT_CLASSES})"
     )
     parser.add_argument(

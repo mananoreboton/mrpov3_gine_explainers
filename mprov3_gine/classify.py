@@ -1,8 +1,8 @@
 """
 Run test-set classification with a saved training checkpoint (independent of train.py).
 
-Writes results/classifications/fold_<k>/evaluation_results.json and classification_summary.json.
-See README.md (Usage) and ``evaluate.py --help`` for flags (splits and architecture must match training).
+Writes results/classifications/fold_<k>/classification_results.json and classification_summary.json.
+See README.md (Usage) and ``classify.py --help`` for flags (splits and architecture must match training).
 """
 
 import argparse
@@ -13,12 +13,14 @@ from pathlib import Path
 import torch
 from mprov3_gine_explainer_defaults import (
     BUILT_DATASET_FOLDER_NAME,
+    CLASSIFICATION_RESULTS_JSON,
     DEFAULT_DATA_ROOT,
     DEFAULT_EDGE_DIM,
     DEFAULT_IN_CHANNELS,
     DEFAULT_POOL,
     DEFAULT_RESULTS_ROOT,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    LEGACY_EVALUATION_RESULTS_JSON,
     resolve_checkpoint_path,
     resolve_dataset_dir,
     resolve_fold_indices,
@@ -34,19 +36,35 @@ from cli_common import (
     add_model_loader_args,
     add_split_and_fold_args,
 )
-from evaluation import evaluate_test_with_predictions, print_test_report
+from classification import classify_test_with_predictions, print_test_classification_report
 from loaders import create_data_loaders
 from model import MProGNN
-from utils import RunLogger, log_overwrite_if_exists
+from utils import FOLD_SUBDIR_NAME_RE, RunLogger, log_overwrite_if_exists
 
 _CLASSIFICATION_SUMMARY_JSON = "classification_summary.json"
 
 
+def _fold_classification_json_paths(classifications_root: Path) -> list[Path]:
+    """Per-fold JSON paths; prefer classification_results.json over legacy evaluation_results.json."""
+    by_fold: dict[int, Path] = {}
+    for p in classifications_root.glob(f"fold_*/{CLASSIFICATION_RESULTS_JSON}"):
+        m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
+        if m:
+            by_fold[int(m.group(1))] = p
+    for p in classifications_root.glob(f"fold_*/{LEGACY_EVALUATION_RESULTS_JSON}"):
+        m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
+        if m:
+            k = int(m.group(1))
+            if k not in by_fold:
+                by_fold[k] = p
+    return [by_fold[k] for k in sorted(by_fold)]
+
+
 def scan_and_write_classification_summary(classifications_root: Path, log) -> None:
-    """Scan fold_*/evaluation_results.json and write classification_summary.json."""
+    """Scan per-fold classification JSON and write classification_summary.json."""
     summary_path = classifications_root / _CLASSIFICATION_SUMMARY_JSON
     fold_entries: list[dict] = []
-    for json_path in sorted(classifications_root.glob("fold_*/evaluation_results.json")):
+    for json_path in _fold_classification_json_paths(classifications_root):
         data = json.loads(json_path.read_text(encoding="utf-8"))
         fold_entries.append(
             {
@@ -59,7 +77,8 @@ def scan_and_write_classification_summary(classifications_root: Path, log) -> No
     if not fold_entries:
         summary_path.write_text(json.dumps({"folds": []}, indent=2), encoding="utf-8")
         log(
-            f"Classification summary: no fold_*/evaluation_results.json under "
+            f"Classification summary: no fold_*/{CLASSIFICATION_RESULTS_JSON} or "
+            f"fold_*/{LEGACY_EVALUATION_RESULTS_JSON} under "
             f"{classifications_root}; wrote empty {summary_path.name}"
         )
         return
@@ -79,7 +98,10 @@ def scan_and_write_classification_summary(classifications_root: Path, log) -> No
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Evaluate a trained GNN on the test set (classification, run independently of training)."
+        description=(
+            "Classify the test set with a trained GNN checkpoint "
+            "(independent of train.py)."
+        )
     )
     add_data_and_results_roots(
         parser,
@@ -92,11 +114,11 @@ def _parse_args() -> argparse.Namespace:
     )
     add_split_and_fold_args(
         parser,
-        fold_index_help="Evaluate a single fold (0 .. num_folds-1). Default: all folds.",
-        fold_indices_help="Evaluate these fold indices only. Default: all folds.",
+        fold_index_help="Classify the test set for a single fold (0 .. num_folds-1). Default: all folds.",
+        fold_indices_help="Classify the test set for these fold indices only. Default: all folds.",
     )
-    add_batch_size_arg(parser, for_evaluation=True)
-    add_model_loader_args(parser, for_evaluation=True)
+    add_batch_size_arg(parser, for_classification=True)
+    add_model_loader_args(parser, for_classification=True)
     return parser.parse_args()
 
 
@@ -134,8 +156,8 @@ def main() -> None:
         fold_dir = f"fold_{k}"
         out_dir = results_root / RESULTS_CLASSIFICATIONS / fold_dir
         out_dir.mkdir(parents=True, exist_ok=True)
-        log_path = out_dir / "evaluate.log"
-        results_path = out_dir / "evaluation_results.json"
+        log_path = out_dir / "classify.log"
+        results_path = out_dir / CLASSIFICATION_RESULTS_JSON
 
         with RunLogger(log_path) as log:
             log.log(
@@ -164,8 +186,10 @@ def main() -> None:
                 torch.load(checkpoint_path, map_location=device, weights_only=False)
             )
 
-            log.log(f"Running test evaluation (fold_index={k})")
-            test_metrics, results = evaluate_test_with_predictions(model, test_loader, device)
+            log.log(f"Running test-set classification (fold_index={k})")
+            test_metrics, results = classify_test_with_predictions(
+                model, test_loader, device
+            )
 
             payload = {
                 "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -185,7 +209,7 @@ def main() -> None:
                 f"Test accuracy (Category): {test_metrics.accuracy:.4f} "
                 f"(fold_index={k})"
             )
-            print_test_report(test_metrics)
+            print_test_classification_report(test_metrics)
             results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             log.log(f"Results saved to {results_path}")
             log.log(f"Log written to {log_path}")
