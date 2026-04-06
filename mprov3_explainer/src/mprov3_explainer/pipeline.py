@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import time
 import warnings
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Iterator, Optional
 
 import torch
@@ -22,7 +22,6 @@ from torch_geometric.utils import subgraph
 
 from mprov3_explainer.explainers import ExplainerSpec, get_spec
 from mprov3_explainer.preprocessing import (
-    PreprocessedExplanation,
     _align_node_mask_to_graph,
     apply_preprocessing,
     edge_mask_to_node_mask,
@@ -116,26 +115,17 @@ def _predict_target_proba(
         return float(probs.squeeze(0)[target_class].item())
 
 
-def _paper_metrics_from_masks(
-    model: torch.nn.Module,
+def _paper_normalized_node_mask_from_explanation(
     explanation: Explanation,
-    *,
-    target_class: int,
-    n_thresholds: int = 100,
-) -> tuple[float, float, float]:
+) -> Optional[torch.Tensor]:
     """
-    Longa et al. (2025) graph classification fidelity metrics:
-    Fsuf, Fcom, and F1-fidelity computed via threshold sweeping over hard masks.
+    Build a single [N] node mask in [0, 1] for Longa-style threshold metrics.
+    Converts edge_mask → node (mean over incident edges) when node_mask is absent.
     """
     x = explanation.x
     edge_index = explanation.edge_index
     if x is None or edge_index is None:
-        return 0.0, 0.0, 0.0
-
-    batch = explanation.get("batch")
-    if batch is None:
-        batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-    edge_attr = explanation.get("edge_attr")
+        return None
 
     node_mask = explanation.get("node_mask")
     edge_mask = explanation.get("edge_mask")
@@ -148,7 +138,31 @@ def _paper_metrics_from_masks(
         node_mask = reduce_node_mask(node_mask) if node_mask.dim() > 1 else node_mask
         node_mask = normalize_mask(node_mask)
     else:
-        return 0.0, 0.0, 0.0
+        return None
+    return node_mask
+
+
+def _paper_sufficiency_and_comprehensiveness(
+    model: torch.nn.Module,
+    explanation: Explanation,
+    *,
+    node_mask: torch.Tensor,
+    target_class: int,
+    n_thresholds: int,
+) -> tuple[float, float]:
+    """
+    Threshold sweep: sufficiency from full_prob − subgraph(explanation-only) prob;
+    comprehensiveness from full_prob − complement-subgraph prob.
+    """
+    x = explanation.x
+    edge_index = explanation.edge_index
+    if x is None or edge_index is None:
+        return 0.0, 0.0
+
+    batch = explanation.get("batch")
+    if batch is None:
+        batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+    edge_attr = explanation.get("edge_attr")
 
     full_prob = _predict_target_proba(
         model,
@@ -161,7 +175,7 @@ def _paper_metrics_from_masks(
 
     Nt = int(n_thresholds)
     if Nt <= 1:
-        return 0.0, 0.0, 0.0
+        return 0.0, 0.0
 
     suf_sum = 0.0
     com_sum = 0.0
@@ -176,7 +190,6 @@ def _paper_metrics_from_masks(
 
         if bool(keep.any()):
             keep_nodes = all_nodes[keep]
-            # PyG returns (edge_index, edge_attr, edge_mask) when return_edge_mask=True.
             sub_ei, sub_edge_attr, _ = subgraph(
                 keep_nodes,
                 edge_index,
@@ -225,12 +238,164 @@ def _paper_metrics_from_masks(
         suf_sum += (full_prob - exp_prob)
         com_sum += (full_prob - comp_prob)
 
-    Fsuf = suf_sum / denom
-    Fcom = com_sum / denom
+    return float(suf_sum / denom), float(com_sum / denom)
+
+
+def _paper_f1_fidelity(Fsuf: float, Fcom: float) -> float:
+    """Paper F1-fidelity from sufficiency and comprehensiveness (Longa et al.)."""
     num = 2.0 * (1.0 - Fsuf) * Fcom
     den = (1.0 - Fsuf) + Fcom
-    Ff1 = (num / den) if abs(den) > 1e-12 else 0.0
-    return float(Fsuf), float(Fcom), float(Ff1)
+    return (num / den) if abs(den) > 1e-12 else 0.0
+
+
+def _paper_metrics_from_masks(
+    model: torch.nn.Module,
+    explanation: Explanation,
+    *,
+    target_class: int,
+    n_thresholds: int = 100,
+) -> tuple[float, float, float]:
+    """
+    Longa et al. (2025) graph classification fidelity metrics:
+    Fsuf, Fcom, and F1-fidelity computed via threshold sweeping over hard masks.
+    """
+    node_mask = _paper_normalized_node_mask_from_explanation(explanation)
+    if node_mask is None:
+        return 0.0, 0.0, 0.0
+    Fsuf, Fcom = _paper_sufficiency_and_comprehensiveness(
+        model,
+        explanation,
+        node_mask=node_mask,
+        target_class=target_class,
+        n_thresholds=n_thresholds,
+    )
+    Ff1 = _paper_f1_fidelity(Fsuf, Fcom)
+    return Fsuf, Fcom, Ff1
+
+
+def _coerce_explanation_device_dtype(raw_explanation: Any, device: torch.device) -> Any:
+    """Move explanation tensors to *device*; on MPS, downcast float64 masks to float32."""
+    if not hasattr(raw_explanation, "to") or device.type == "cpu":
+        return raw_explanation
+    if device.type == "mps" and hasattr(raw_explanation, "apply"):
+        def _float64_to_float32(obj: Any) -> Any:
+            if torch.is_tensor(obj) and obj.dtype == torch.float64:
+                return obj.float()
+            return obj
+
+        raw_explanation = raw_explanation.apply(_float64_to_float32)
+    return raw_explanation.to(device)
+
+
+def _forward_raw_explanation(
+    explainer: Any,
+    model: torch.nn.Module,
+    *,
+    x: torch.Tensor,
+    edge_index: torch.Tensor,
+    batch_tensor: torch.Tensor,
+    edge_attr: Optional[torch.Tensor],
+    device: torch.device,
+    spec: ExplainerSpec,
+    target_class: int,
+) -> tuple[Any, float]:
+    """Run the explainer forward; return (raw explanation, wall seconds)."""
+    call_kwargs: dict[str, Any] = dict(batch=batch_tensor, edge_attr=edge_attr)
+    if spec.phenomenon_only:
+        call_kwargs["target"] = torch.tensor([target_class], device=device)
+
+    t0 = time.perf_counter()
+    raw_explanation = explainer(x, edge_index, **call_kwargs)
+    elapsed = time.perf_counter() - t0
+    model.to(device)
+    raw_explanation = _coerce_explanation_device_dtype(raw_explanation, device)
+    return raw_explanation, elapsed
+
+
+def _preprocess_for_metrics(
+    raw_explanation: Explanation,
+    *,
+    pred_class: int,
+    target_class: int,
+    apply_preprocessing_flag: bool,
+    correct_class_only: bool,
+    apply_mask_spread_filter: bool,
+    mask_spread_tolerance: float,
+) -> tuple[Explanation, bool, bool]:
+    """Longa-style preprocessing on masks; return (explanation clone with masks, valid, correct_class)."""
+    if apply_preprocessing_flag:
+        preproc = apply_preprocessing(
+            raw_explanation,
+            pred_class=pred_class,
+            target_class=target_class,
+            correct_class_only=correct_class_only,
+            normalize=True,
+            convert_edge_to_node=False,
+            apply_mask_spread_filter=apply_mask_spread_filter,
+            mask_spread_tolerance=mask_spread_tolerance,
+        )
+        explanation = raw_explanation.clone()
+        _pre_edge_mask = getattr(preproc.explanation, "edge_mask", None)
+        if _pre_edge_mask is not None:
+            explanation.edge_mask = _pre_edge_mask
+        if getattr(preproc.explanation, "node_mask", None) is not None:
+            explanation.node_mask = preproc.explanation.node_mask
+        return explanation, preproc.valid, preproc.correct_class
+
+    explanation = raw_explanation
+    valid = True
+    correct_class = target_class == pred_class if target_class is not None else True
+    return explanation, valid, correct_class
+
+
+def _compute_pyg_fidelity(
+    explainer: Any,
+    explanation: Explanation,
+    *,
+    explainer_name: str,
+    graph_id: str,
+) -> tuple[float, float]:
+    """PyG GraphFramEx fidelity+ / fidelity− on the preprocessed explanation."""
+    try:
+        fid_result = fidelity(explainer, _fidelity_explanation(explanation))
+        if isinstance(fid_result, (list, tuple)):
+            fid_plus = float(fid_result[0]) if len(fid_result) > 0 else 0.0
+            fid_minus = float(fid_result[1]) if len(fid_result) > 1 else 0.0
+        else:
+            fid_plus = float(fid_result)
+            fid_minus = 0.0
+        return fid_plus, fid_minus
+    except Exception as exc:
+        _LOG.warning("Fidelity failed for %s / %s: %s", explainer_name, graph_id, exc)
+        return 0.0, 0.0
+
+
+def _compute_pyg_characterization(
+    fid_plus: float,
+    fid_minus: float,
+    *,
+    device: torch.device,
+    explainer_name: str,
+    graph_id: str,
+) -> float:
+    """PyG framework metric: characterization_score from fid+ and fid−."""
+    try:
+        return float(
+            characterization_score(
+                torch.tensor(fid_plus, device=device),
+                torch.tensor(fid_minus, device=device),
+                pos_weight=0.5,
+                neg_weight=0.5,
+            ).item()
+        )
+    except Exception as exc:
+        _LOG.warning(
+            "characterization_score failed for %s / %s: %s",
+            explainer_name,
+            graph_id,
+            exc,
+        )
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -409,88 +574,44 @@ def run_explanations(
             if target_class is None:
                 target_class = pred_class
 
-            # Build call kwargs — phenomenon-mode explainers need target
-            call_kwargs: dict[str, Any] = dict(batch=batch_tensor, edge_attr=edge_attr)
-            if spec.phenomenon_only:
-                call_kwargs["target"] = torch.tensor([target_class], device=device)
-
-            t0 = time.perf_counter()
-            raw_explanation = explainer(x, edge_index, **call_kwargs)
-            elapsed = time.perf_counter() - t0
-            model.to(device)
-
-            if hasattr(raw_explanation, "to") and device.type != "cpu":
-                # MPS does not support float64 tensors; some explainers (notably
-                # torch_geometric.contrib PGMExplainer) may emit float64 masks/stats.
-                if device.type == "mps" and hasattr(raw_explanation, "apply"):
-                    def _float64_to_float32(obj: Any) -> Any:
-                        if torch.is_tensor(obj) and obj.dtype == torch.float64:
-                            return obj.float()
-                        return obj
-
-                    raw_explanation = raw_explanation.apply(_float64_to_float32)
-                raw_explanation = raw_explanation.to(device)
+            raw_explanation, elapsed = _forward_raw_explanation(
+                explainer,
+                model,
+                x=x,
+                edge_index=edge_index,
+                batch_tensor=batch_tensor,
+                edge_attr=edge_attr,
+                device=device,
+                spec=spec,
+                target_class=int(target_class),
+            )
 
             has_edge_mask = getattr(raw_explanation, "edge_mask", None) is not None
             has_node_mask = getattr(raw_explanation, "node_mask", None) is not None
 
-            # Preprocessing
-            if apply_preprocessing_flag:
-                preproc = apply_preprocessing(
-                    raw_explanation,
-                    pred_class=pred_class,
-                    target_class=target_class,
-                    correct_class_only=correct_class_only,
-                    normalize=True,
-                    convert_edge_to_node=False,
-                    apply_mask_spread_filter=apply_mask_spread_filter,
-                    mask_spread_tolerance=mask_spread_tolerance,
-                )
-                explanation = raw_explanation.clone()
-                _pre_edge_mask = getattr(preproc.explanation, "edge_mask", None)
-                if _pre_edge_mask is not None:
-                    explanation.edge_mask = _pre_edge_mask
-                if getattr(preproc.explanation, "node_mask", None) is not None:
-                    explanation.node_mask = preproc.explanation.node_mask
-                valid = preproc.valid
-                correct_class = preproc.correct_class
-            else:
-                explanation = raw_explanation
-                valid = True
-                correct_class = target_class == pred_class if target_class is not None else True
+            explanation, valid, correct_class = _preprocess_for_metrics(
+                raw_explanation,
+                pred_class=pred_class,
+                target_class=target_class,
+                apply_preprocessing_flag=apply_preprocessing_flag,
+                correct_class_only=correct_class_only,
+                apply_mask_spread_filter=apply_mask_spread_filter,
+                mask_spread_tolerance=mask_spread_tolerance,
+            )
 
-            # Fidelity (PyG multiplies node_mask * x; coerce to per-node 1D to avoid bad 2D layouts)
-            try:
-                fid_result = fidelity(explainer, _fidelity_explanation(explanation))
-                if isinstance(fid_result, (list, tuple)):
-                    fid_plus = float(fid_result[0]) if len(fid_result) > 0 else 0.0
-                    fid_minus = float(fid_result[1]) if len(fid_result) > 1 else 0.0
-                else:
-                    fid_plus = float(fid_result)
-                    fid_minus = 0.0
-            except Exception as exc:
-                _LOG.warning("Fidelity failed for %s / %s: %s", explainer_name, graph_id, exc)
-                fid_plus = 0.0
-                fid_minus = 0.0
-
-            # PyG/GraphFramEx: characterization score combines (fid+, fid-)
-            try:
-                pyg_char = float(
-                    characterization_score(
-                        torch.tensor(fid_plus, device=device),
-                        torch.tensor(fid_minus, device=device),
-                        pos_weight=0.5,
-                        neg_weight=0.5,
-                    ).item()
-                )
-            except Exception as exc:
-                _LOG.warning(
-                    "characterization_score failed for %s / %s: %s",
-                    explainer_name,
-                    graph_id,
-                    exc,
-                )
-                pyg_char = 0.0
+            fid_plus, fid_minus = _compute_pyg_fidelity(
+                explainer,
+                explanation,
+                explainer_name=explainer_name,
+                graph_id=graph_id,
+            )
+            pyg_char = _compute_pyg_characterization(
+                fid_plus,
+                fid_minus,
+                device=device,
+                explainer_name=explainer_name,
+                graph_id=graph_id,
+            )
 
             # Paper metrics (Longa et al.): threshold-sweep probability drops
             if paper_metrics:
