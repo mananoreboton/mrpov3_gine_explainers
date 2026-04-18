@@ -1,110 +1,101 @@
 # mprov3-explainer
 
-MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations of the trained GINE classifier. Loads the model and dataset from **mprov3_gine/results**, uses a pluggable **explainer registry** (default: all **available explainers**), and follows the **common representation** from *"Explaining the Explainers in Graph Neural Networks: a Comparative Study"* (Longa et al.): **(1) explanation masks generation** and **(2) preprocessing** (Conversion, Filtering, Normalization) applied to any explainer output before metrics.
+MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations of the trained GINE classifier. Loads the model and dataset from **mprov3_gine/results**, runs **all** registered explainers on the **single best CV fold** (chosen from summaries produced by **classify.py** or **train.py**), and follows the **common representation** from *"Explaining the Explainers in Graph Neural Networks: a Comparative Study"* (Longa et al.): **(1) explanation masks** and **(2) preprocessing** (filtering, normalization) before metrics.
 
-Outputs are written under **`results/<explanations|visualizations>/<timestamp>/<explainer>/`** so one run can produce results for multiple explainers under the same timestamp.
+Artifacts go under **`mprov3_explainer/results/folds/fold_<k>/`**: **`explanations/<explainer>/`**, **`visualizations/<explainer>/graphs/`** (PNGs from the optional viz script). Re-running overwrites after an **`[INFO]`** line.
 
-## Flow
+## Flow (summary)
 
-1. **Resolve paths** – From `results_root`, resolve latest `trainings/<timestamp>/best_gnn.pt` and `datasets/<timestamp>/` (contains `data.pt`). Splits (train/val/test) are read from `data_root/Splits/`.
-2. **Load model** – Instantiate `MProGNN` with the same hyperparameters as training (defaults from `mprov3_gine_explainer_defaults` / CLI), load state dict from `best_gnn.pt`, set to eval.
-3. **Build Explainer** – For each chosen explainer, the registry provides a builder (PyG `Explainer` for GNNExplainer).
-4. **Phase 1 – Masks generation** – For each graph: call explainer → raw `Explanation` (edge_mask, optionally node_mask).
-5. **Phase 2 – Preprocessing** (optional, on by default):
-   - **Conversion** – Optional edge-mask → node-mask (e.g. mean incident weights per node) for protocols that need it.
-   - **Filtering** – Restrict to **correctly classified** instances; discard **nearly constant** masks (max − min &lt; `--min_mask_range`).
-   - **Normalization** – Scale mask to [0, 1] per instance.
-6. **Phase 3 – Metrics** – Fidelity (fid+, fid−) and plausibility (AUROC) on the **preprocessed** explanation.
-7. **Report and masks** – Write `explanation_report.json` and per-graph `masks/<pdb_id>.json` (preprocessed masks).
+Fold selection and I/O are handled in [`scripts/run_explanations.py`](scripts/run_explanations.py); per-graph explain → preprocess → metrics is in [`src/mprov3_explainer/pipeline.py`](src/mprov3_explainer/pipeline.py). The detailed **explanation substeps** table below maps each phase to code.
 
-## Input
+## `scripts/run_explanations.py`: command without flags
 
-- **results_root** (default: `../mprov3_gine/results` from the project root):
-  - `trainings/<timestamp>/best_gnn.pt` – trained GINE checkpoint
-  - `datasets/<timestamp>/data.pt` – PyG dataset; `pdb_order.txt` in the same folder is used for split indexing
-- **data_root** (default: from mprov3_gine config) – path to the raw MPro snapshot containing `Splits/` (train/val/test PDB ID lists)
-
-Model and split args (e.g. `--fold_index`, `--hidden`, `--num_layers`) must match the run that produced `best_gnn.pt`.
-
-## Output
-
-- **Stdout** – Per-graph line: `graph_id: fid+=... fid-=... [auroc=...] [excluded]`; then mean fidelity and graph counts (total and valid).
-- **results/explanations/&lt;timestamp&gt;/&lt;explainer&gt;/** (inside mprov3_explainer; timestamp is execution time in UTC):
-  - `explanation_report.json` – `mean_fidelity_plus`, `mean_fidelity_minus`, `num_graphs`, `num_valid`, `explainer`, and `per_graph` (graph_id, fidelity_plus, fidelity_minus, auroc, valid, correct_class).
-  - `masks/&lt;pdb_id&gt;.json` – per-graph `edge_index` and preprocessed `edge_mask` for **generate_visualizations**.
-
-**Available explainers:** **GNNExplainer**, **SubgraphX**. Use `--explainer` or `--explainers` to select.
-
-## Usage
-
-### Setup
-
-```bash
-uv sync
-```
-
-### Run explainers (default: all available, latest results, full test set)
+From **`mprov3_explainer/`** (after `uv sync`):
 
 ```bash
 uv run python scripts/run_explanations.py
 ```
 
-### Run a specific explainer or multiple explainers
+This run:
+
+- Resolves **mprov3_gine/results** and picks the **best fold** using **`test_accuracy`** from **`classifications/classification_summary.json`**.
+- Uses the **test** split loader for the explanation loop (`--split` default).
+- Loads **`best_gnn.pt`** for that fold and **`MProGNN`** hyperparameters from **`mprov3_gine_explainer_defaults`** (must match training).
+- Loads splits and structures from the workspace MPro snapshot directory named in **`DEFAULT_MPRO_SNAPSHOT_DIR_NAME`** (same default as the GNN pipeline).
+- Runs **every** name in **`AVAILABLE_EXPLAINERS`** in order.
+- Enables the **mask spread filter** (τ = 10⁻³): masks with max − min below τ are marked invalid; disable only with **`--no_mask_spread_filter`**.
+- Uses **Nt = 100** threshold steps for Longa-style paper metrics (`PAPER_N_THRESHOLDS` in the script).
+- Writes **`explanation_report.json`** and **`masks/`** per explainer, then **`explanations/comparison_report.json`** for all explainers.
+
+**PGEXPL:** always trains its MLP on the **train** loader first, then explains graphs from the split selected by **`--split`** (default test).
+
+## `scripts/run_explanations.py`: flags and parameters
+
+Paths are **not** configurable on the CLI: GNN artifacts are under **`mprov3_gine/results`**, snapshot/splits under the workspace default from **`mprov3_gine_explainer_defaults`**.
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--split` | `test` | Which loader’s graphs are explained: `train`, `validation`, or `test`. Does **not** change where **PGEXPL** trains (always **train**). |
+| `--fold_metric` | `test_accuracy` | `test_accuracy` → best fold from **`classification_summary.json`**. `train_accuracy` → **`training_summary.json`** field **`best_train_accuracy_fold_index`**. |
+| `--no_mask_spread_filter` | off (filter **on**) | If set, skips degenerate-mask rejection: no check that max(mask) − min(mask) ≥ τ before normalization. |
+
+Example combinations:
 
 ```bash
-uv run python scripts/run_explanations.py --explainer GNNExplainer
-uv run python scripts/run_explanations.py --explainer SubgraphX
-uv run python scripts/run_explanations.py --explainers GNNExplainer SubgraphX
+uv run python scripts/run_explanations.py --split validation
+uv run python scripts/run_explanations.py --fold_metric train_accuracy
+uv run python scripts/run_explanations.py --split train --no_mask_spread_filter
 ```
 
-### Limit number of graphs (e.g. quick run)
+## Explanation substeps (code anchors)
+
+Each row is one conceptual step: what the code does, and the main line or call to read first. Line numbers refer to the current tree; adjust if you edit those files.
+
+| Step | What the code does | Anchor |
+|------|-------------------|--------|
+| **Configuration (dataset, classes, model)** | Builds loaders, device, checkpoint, `MProGNN`, output root, and mask-filter flag into **`ExplanationRunContext`**. | [`ExplanationRunContext`](scripts/run_explanations.py) (dataclass ~81); fill in [`build_explanation_run_context`](scripts/run_explanations.py) (~137). |
+| **Explainer configuration** | Per explainer: kwargs (`num_classes`, IG steps, PGM samples) and epoch count; then `run_explanations` (~506). | [`run_one_explainer`](scripts/run_explanations.py): `run_explanations(...)` call (~245). |
+| **Explain graph** | Runs the PyG explainer forward to produce raw **`edge_mask` / `node_mask`**. | [`_forward_raw_explanation`](src/mprov3_explainer/pipeline.py): `raw_explanation = explainer(x, edge_index, **call_kwargs)` (~308). |
+| **Preprocessing wrapper** | Applies Longa-style pipeline on the raw explanation and copies masks onto a clone for metrics. | [`_preprocess_for_metrics`](src/mprov3_explainer/pipeline.py): `apply_preprocessing(...)` (~327). |
+| **Filtering** | Marks explanation invalid if edge or node mask spread (max − min) is below τ; optional correct-class filter. | [`apply_preprocessing`](src/mprov3_explainer/preprocessing.py): `_mask_weight_spread(...) < tol` (~151–158). |
+| **Normalization** | Per-mask min–max to [0, 1] on the preprocessed explanation (PyG path). | [`apply_preprocessing`](src/mprov3_explainer/preprocessing.py): `normalize_mask(edge_mask)` / `normalize_mask(node_mask)` (~168–174). |
+| **Conversion (edge → node, when needed)** | For **paper** metrics only: if there is no node mask, build one by **averaging incident edge weights** per node, then normalize. Preprocessing keeps **`convert_edge_to_node=False`** so PyG fidelity still uses edge masks when present. | [`edge_mask_to_node_mask`](src/mprov3_explainer/preprocessing.py): mean via `scatter_add_` and `node_mask / degree` (~44–50); invoked from [`_paper_normalized_node_mask_from_explanation`](src/mprov3_explainer/pipeline.py) (~133–135). |
+| **PyG fidelity** | GraphFramEx **fid+** / **fid−** via PyG **`fidelity`**. | [`_compute_pyg_fidelity`](src/mprov3_explainer/pipeline.py): `fidelity(explainer, _fidelity_explanation(explanation))` (~360). |
+| **Sufficiency & comprehensiveness (paper)** | Threshold sweep over hard node masks: average **full_prob − subgraph_prob** (sufficiency) and **full_prob − complement_prob** (comprehensiveness). | [`_paper_sufficiency_and_comprehensiveness`](src/mprov3_explainer/pipeline.py): `suf_sum += (full_prob - exp_prob)` and `com_sum += (full_prob - comp_prob)` (~238–239). |
+| **Paper F1-fidelity** | Combines Fsuf and Fcom into **Ff1** (Longa et al.). | [`_paper_f1_fidelity`](src/mprov3_explainer/pipeline.py) (~246–248). |
+| **Framework metric (PyG)** | **Characterization** score from fid+ and fid−. | [`_compute_pyg_characterization`](src/mprov3_explainer/pipeline.py): `characterization_score(...)` (~384). |
+| **Metrics aggregation (§5.2 style)** | After one explainer finishes, **arithmetic means** over **all** graphs in the split for fid+/− (via **`aggregate_fidelity(..., valid_only=False)`**), characterization, Fsuf, Fcom, Ff1; **`num_valid`** counts rows with **`valid`** true. Cross-explainer JSON merges per-explainer summaries. | [`run_one_explainer`](scripts/run_explanations.py): means ~276–280; [`aggregate_fidelity`](src/mprov3_explainer/pipeline.py) (~654); [`write_comparison_report`](scripts/run_explanations.py) (~370). |
+
+**Longa PDF §5.2:** See the paper copy at [`../doc/2025_Longa_Benchmarking.pdf`](../doc/2025_Longa_Benchmarking.pdf) for the dataset-level aggregation protocol. This implementation reports **simple means over every graph in the chosen split** for the scalar summaries (invalid graphs remain in the sum with their stored scores; the **`valid`** flag documents filtering). If §5.2 requires restricting means to **valid** instances only, change the aggregations in [`run_one_explainer`](scripts/run_explanations.py) accordingly.
+
+## CLI (`scripts/generate_visualizations.py`)
+
+Writes **PNG** files only (no HTML, no HTTP server). Expects **exactly one** fold directory under **`mprov3_explainer/results/folds/`** with explainer outputs; otherwise raises. Reads **`mprov3_explainer/results`** and ligand SDFs from the same default MPro snapshot path as the GNN pipeline (no path flags).
+
+## Available explainers (registry)
+
+| Name | Description |
+|------|-------------|
+| **GRADEXPINODE** | Captum Saliency on node features |
+| **GRADEXPLEDGE** | Captum Saliency on edge mask |
+| **GUIDEDBP** | Guided backprop on node features |
+| **IGNODE** | Integrated Gradients on node features |
+| **IGEDGE** | Integrated Gradients on edge mask |
+| **GNNEXPL** | PyG GNNExplainer |
+| **PGEXPL** | PGExplainer (train MLP on train loader, then explain) |
+| **PGMEXPL** | PGMExplainer |
+
+### Implementation notes
+
+- **Integrated Gradients:** Uses bridge modules so Captum does not break PyG `edge_index`; on **MPS**, IG may run on CPU then move masks to float32.
+- **PGExplainer:** Full training pass over the train loader each run (no CLI cap).
+
+## Usage
 
 ```bash
-uv run python scripts/run_explanations.py --max_graphs 10
-```
-
-### Custom paths
-
-```bash
-uv run python scripts/run_explanations.py \
-  --results_root /path/to/mprov3_gine/results \
-  --data_root /path/to/MPro_snapshot
-```
-
-Report and masks are written to `results/explanations/<timestamp>/<explainer>/` in the mprov3_explainer project root.
-
-### Generate visualizations (index + images)
-
-After running the explainer, generate an HTML index and 2D molecular images with bond coloring from the saved masks and SDF files:
-
-```bash
+uv sync
+uv run python scripts/run_explanations.py
 uv run python scripts/generate_visualizations.py
 ```
 
-This uses the **latest** explanation run under `results/explanations/` and, by default, all **available explainers**. Output is written to **results/visualizations/&lt;new_timestamp&gt;/&lt;explainer&gt;/**:
-
-- `index.html` – summary (mean fidelity, num_graphs) and a grid of thumbnails linking to each graphic.
-- `graphs/mask_&lt;pdb_id&gt;.png` – 2D molecule drawn from the SDF with bonds colored by explainer importance (max of edge_mask per bond).
-
-To use a specific explainer or timestamp:
-
-```bash
-uv run python scripts/generate_visualizations.py --explainer GNNExplainer
-uv run python scripts/generate_visualizations.py --timestamp 2026-03-15_133711
-uv run python scripts/generate_visualizations.py --explainers GNNExplainer
-```
-
-Images require SDF files at `data_root/Ligand/Ligand_SDF/&lt;pdb_id&gt;_ligand.sdf`. Pass `--data_root` if your MPro snapshot is elsewhere; `--results_root` overrides the default results directory.
-
-### Other options (explainer and preprocessing)
-
-- `--explainer` – single explainer; ignored if `--explainers` is set
-- `--explainers` – explainers to run (default: all available)
-- `--checkpoint` – checkpoint filename (default: `best_gnn.pt`)
-- `--fold_index`, `--num_folds` – which fold to use (must match training)
-- `--hidden`, `--num_layers`, `--dropout`, `--num_classes` – must match the trained model
-- `--explainer_epochs` – explainer optimization epochs per graph (default: `mprov3_gine_explainer_defaults.DEFAULT_GNN_EXPLAINER_EPOCHS`, currently 200; GNNExplainer)
-- **SubgraphX:** `--subgraphx_rollout` (default: 10), `--subgraphx_max_nodes` (default: 10), `--subgraphx_sample_num` (default: 100)
-- **Preprocessing (Longa et al.):** `--no_preprocessing` disable conversion/filtering/normalization; `--no_correct_class_only` include misclassified in averaging; `--min_mask_range` (default 1e-3) min mask range to keep; `--fidelity_valid_only` report mean fidelity only over valid instances
-
-Plausibility (AUROC) is only computed when a ground-truth explanation mask is supplied (e.g. via a custom callback in the pipeline); the script does not provide one by default.
+Plausibility (AUROC) with a ground-truth mask is not enabled in the default script.

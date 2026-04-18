@@ -1,246 +1,389 @@
 """
 Explainer registry: available explainers and builder callables.
-Output paths use <timestamp>/<explainer_name>/ under results/explanations and results/visualizations.
+Output paths use <explainer_name>/ under results/explanations and results/visualizations.
+
+Supports eight PyG-native explainer configurations (see ``AVAILABLE_EXPLAINERS``).
 """
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 import torch
-from mprov3_gine_explainer_defaults import DEFAULT_EXPLANATION_TYPE, DEFAULT_MODEL_CONFIG
-from torch_geometric.explain import Explainer, Explanation
-from torch_geometric.explain.algorithm import GNNExplainer
-from torch_geometric.explain.algorithm.utils import clear_masks, set_masks
-from torch_geometric.explain.config import (
-    ExplanationType,
-    ModelConfig,
-    ModelMode,
-    ModelReturnType,
-    ModelTaskLevel,
+from mprov3_gine_explainer_defaults import (
+    DEFAULT_EXPLANATION_TYPE,
+    DEFAULT_GNN_EXPLAINER_EPOCHS,
+    DEFAULT_GNN_EXPLAINER_LR,
+    DEFAULT_IG_N_STEPS,
+    DEFAULT_MODEL_CONFIG,
+    DEFAULT_PG_EXPLAINER_EPOCHS,
+    DEFAULT_PG_EXPLAINER_LR,
+    DEFAULT_PGM_NUM_SAMPLES,
+    EDGE_MASK_OBJECT,
+    NODE_MASK_ATTRIBUTES,
+    PHENOMENON_EXPLANATION_TYPE,
 )
+from torch_geometric.explain import Explainer, Explanation
+from torch_geometric.explain.algorithm import GNNExplainer, PGExplainer
 
-AVAILABLE_EXPLAINERS: list[str] = ["GNNExplainer", "SubgraphX"]
+from mprov3_explainer.captum_leaf_explainer import LeafInputCaptumExplainer
+
+_LOG = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# SubgraphX (DIG): model adapter and wrapper
+# ExplainerSpec: metadata for each registered explainer
 # ---------------------------------------------------------------------------
 
 
-class _GINEAdapterForDIG(torch.nn.Module):
-    """Wraps GINE so DIG can call model(x, edge_index) or model(data=...)."""
+@dataclass(frozen=True)
+class ExplainerSpec:
+    """Capability descriptor for a registered explainer."""
 
-    def __init__(self, model: torch.nn.Module):
-        super().__init__()
-        self._model = model
-
-    def forward(
-        self,
-        x: Optional[torch.Tensor] = None,
-        edge_index: Optional[torch.Tensor] = None,
-        batch: Optional[torch.Tensor] = None,
-        edge_attr: Optional[torch.Tensor] = None,
-        data: Optional[Any] = None,
-    ) -> torch.Tensor:
-        if data is not None:
-            if hasattr(data, "to"):
-                data = data.to(next(self._model.parameters()).device)
-            x = data.x
-            edge_index = data.edge_index
-            batch = getattr(data, "batch", None)
-            edge_attr = getattr(data, "edge_attr", None)
-        if batch is None and x is not None:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-        if edge_attr is None and edge_index is not None:
-            edge_dim = getattr(self._model, "edge_dim", 1)
-            edge_attr = torch.zeros(
-                edge_index.size(1), edge_dim, device=x.device, dtype=torch.float32
-            )
-        return self._model(x, edge_index, batch, edge_attr)
+    name: str
+    builder: Callable[..., Any]
+    report_paragraph: str
+    needs_training: bool = False
+    phenomenon_only: bool = False
+    produces_node_mask: bool = False
+    produces_edge_mask: bool = True
 
 
-def _find_closest_from_dicts(
-    results: list[dict], max_nodes: int
-) -> dict:
-    """Pick the best result from DIG serialized dicts (coalition, P). Same logic as find_closest_node_result."""
-    sorted_results = sorted(results, key=lambda d: len(d["coalition"]))
-    best = sorted_results[0]
-    for d in sorted_results:
-        if len(d["coalition"]) <= max_nodes and d["P"] > best["P"]:
-            best = d
-    return best
-
-
-class _SubgraphXWrapper:
-    """Wrapper so SubgraphX (DIG) fits the pipeline: callable returning Explanation with edge_mask; quacks like PyG Explainer for fidelity()."""
-
-    def __init__(
-        self,
-        dig_subgraphx: Any,
-        model: torch.nn.Module,
-        num_classes: int,
-        max_nodes: int = 10,
-    ):
-        self._subgraphx = dig_subgraphx
-        self.model = model
-        self._num_classes = num_classes
-        self._max_nodes = max_nodes
-        self.model_config = ModelConfig(
-            mode=ModelMode.multiclass_classification,
-            task_level=ModelTaskLevel.graph,
-            return_type=ModelReturnType.raw,
-        )
-        self.explanation_type = ExplanationType.model
-
-    @torch.no_grad()
-    def get_prediction(self, x: torch.Tensor, edge_index: torch.Tensor, **kwargs: Any) -> torch.Tensor:
-        batch = kwargs.get("batch")
-        edge_attr = kwargs.get("edge_attr")
-        if batch is None and x is not None:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-        return self.model(x, edge_index, batch, edge_attr)
-
-    def get_target(self, prediction: torch.Tensor) -> torch.Tensor:
-        return prediction.argmax(dim=-1)
-
-    def get_masked_prediction(
-        self,
-        x: torch.Tensor,
-        edge_index: torch.Tensor,
-        node_mask: Optional[torch.Tensor] = None,
-        edge_mask: Optional[torch.Tensor] = None,
-        **kwargs: Any,
-    ) -> torch.Tensor:
-        if edge_mask is not None:
-            set_masks(self.model, edge_mask, edge_index, apply_sigmoid=False)
-        out = self.get_prediction(x, edge_index, **kwargs)
-        if edge_mask is not None:
-            clear_masks(self.model)
-        return out
-
-    def __call__(
-        self,
-        x: torch.Tensor,
-        edge_index: torch.Tensor,
-        batch: Optional[torch.Tensor] = None,
-        edge_attr: Optional[torch.Tensor] = None,
-    ) -> Explanation:
-        from dig.xgraph.method.subgraphx import find_closest_node_result
-
-        if batch is None:
-            batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
-        with torch.no_grad():
-            logits = self.model(x, edge_index, batch, edge_attr)
-        pred_class = int(logits.argmax(dim=-1).squeeze().item())
-
-        _, explanation_results, _ = self._subgraphx(x, edge_index, max_nodes=self._max_nodes)
-        if pred_class >= len(explanation_results) or not explanation_results[pred_class]:
-            edge_mask = torch.zeros(edge_index.size(1), device=x.device, dtype=torch.float32)
-        else:
-            results_for_class = explanation_results[pred_class]
-            # DIG may return list of dicts (from write_from_MCTSNode_list) instead of MCTSNode objects
-            if results_for_class and isinstance(results_for_class[0], dict):
-                result_node = _find_closest_from_dicts(results_for_class, self._max_nodes)
-                coalition_set = set(result_node["coalition"])
-            else:
-                result_node = find_closest_node_result(
-                    results_for_class, max_nodes=self._max_nodes
-                )
-                coalition_set = set(result_node.coalition)
-            device = edge_index.device
-            row_in = torch.tensor(
-                [int(i) in coalition_set for i in edge_index[0].tolist()],
-                device=device,
-                dtype=torch.bool,
-            )
-            col_in = torch.tensor(
-                [int(i) in coalition_set for i in edge_index[1].tolist()],
-                device=device,
-                dtype=torch.bool,
-            )
-            edge_mask = (row_in & col_in).float()
-
-        # Build Explanation so PyG fidelity(explainer, explanation) works
-        out = Explanation(x=x, edge_index=edge_index, edge_mask=edge_mask)
-        out.batch = batch
-        if edge_attr is not None:
-            out.edge_attr = edge_attr
-        out.target = torch.tensor([pred_class], device=x.device, dtype=torch.long)
-        out._model_args = ("batch", "edge_attr") if edge_attr is not None else ("batch",)
-        return out
-
-
-def _build_subgraphx(
-    model: torch.nn.Module,
-    *,
-    device: torch.device,
-    num_classes: int,
-    rollout: int = 10,
-    min_atoms: int = 5,
-    max_nodes: int = 10,
-    sample_num: int = 100,
-    verbose: bool = False,
-    **kwargs: Any,
-) -> _SubgraphXWrapper:
-    """Build SubgraphX (DIG) explainer for graph-level explanations."""
-    from dig.xgraph.method import SubgraphX
-
-    rollout = kwargs.get("subgraphx_rollout", rollout)
-    max_nodes = kwargs.get("subgraphx_max_nodes", max_nodes)
-    sample_num = kwargs.get("subgraphx_sample_num", sample_num)
-    adapter = _GINEAdapterForDIG(model)
-    adapter.to(device)
-    dig_explainer = SubgraphX(
-        adapter,
-        num_classes=num_classes,
-        device=device,
-        explain_graph=True,
-        rollout=rollout,
-        min_atoms=min_atoms,
-        sample_num=sample_num,
-        verbose=verbose,
-    )
-    return _SubgraphXWrapper(dig_explainer, model, num_classes, max_nodes=max_nodes)
+# ---------------------------------------------------------------------------
+# Builder functions
+# ---------------------------------------------------------------------------
 
 
 def _build_gnn_explainer(
     model: torch.nn.Module,
     *,
     device: torch.device,
-    epochs: int = 200,
-    lr: float = 0.01,
+    epochs: int = DEFAULT_GNN_EXPLAINER_EPOCHS,
+    lr: float = DEFAULT_GNN_EXPLAINER_LR,
     **kwargs: Any,
 ) -> Explainer:
-    """Build PyG Explainer with GNNExplainer for graph-level explanations."""
+    """PyG GNNExplainer — per-instance mask optimisation, edge masks."""
     return Explainer(
         model=model,
         algorithm=GNNExplainer(epochs=epochs, lr=lr),
         explanation_type=DEFAULT_EXPLANATION_TYPE,
-        edge_mask_type="object",
+        edge_mask_type=EDGE_MASK_OBJECT,
         model_config=dict(DEFAULT_MODEL_CONFIG),
     )
 
 
-_EXPLAINER_BUILDERS: Dict[str, Callable[..., Any]] = {
-    "GNNExplainer": _build_gnn_explainer,
-    "SubgraphX": _build_subgraphx,
+def _build_gradexp_node(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    **kwargs: Any,
+) -> Explainer:
+    """Saliency (abs gradients) over node features."""
+    return Explainer(
+        model=model,
+        algorithm=LeafInputCaptumExplainer("Saliency"),
+        explanation_type=DEFAULT_EXPLANATION_TYPE,
+        node_mask_type=NODE_MASK_ATTRIBUTES,
+        edge_mask_type=None,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+def _build_gradexp_edge(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    **kwargs: Any,
+) -> Explainer:
+    """Saliency (abs gradients) over edge mask."""
+    return Explainer(
+        model=model,
+        algorithm=LeafInputCaptumExplainer("Saliency"),
+        explanation_type=DEFAULT_EXPLANATION_TYPE,
+        node_mask_type=None,
+        edge_mask_type=EDGE_MASK_OBJECT,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+def _build_guided_bp(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    **kwargs: Any,
+) -> Explainer:
+    """GuidedBackprop over node features (Captum hook-based)."""
+    _LOG.warning(
+        "GuidedBackprop requires nn.ReLU modules; functional .relu() calls "
+        "in the model will NOT be hooked. Results may be incomplete."
+    )
+    return Explainer(
+        model=model,
+        algorithm=LeafInputCaptumExplainer("GuidedBackprop"),
+        explanation_type=DEFAULT_EXPLANATION_TYPE,
+        node_mask_type=NODE_MASK_ATTRIBUTES,
+        edge_mask_type=None,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+def _build_ig_node(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    n_steps: int = DEFAULT_IG_N_STEPS,
+    **kwargs: Any,
+) -> Explainer:
+    """Integrated Gradients over node features (Captum-safe bridge; see integrated_gradients_node)."""
+    from mprov3_explainer.integrated_gradients_node import IntegratedGradientsNodeExplainer
+
+    return Explainer(
+        model=model,
+        algorithm=IntegratedGradientsNodeExplainer(n_steps=n_steps),
+        explanation_type=DEFAULT_EXPLANATION_TYPE,
+        node_mask_type=NODE_MASK_ATTRIBUTES,
+        edge_mask_type=None,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+def _build_ig_edge(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    n_steps: int = DEFAULT_IG_N_STEPS,
+    **kwargs: Any,
+) -> Explainer:
+    """Integrated Gradients over edge mask (Captum-safe bridge; see integrated_gradients_edge)."""
+    from mprov3_explainer.integrated_gradients_edge import IntegratedGradientsEdgeExplainer
+
+    return Explainer(
+        model=model,
+        algorithm=IntegratedGradientsEdgeExplainer(n_steps=n_steps),
+        explanation_type=DEFAULT_EXPLANATION_TYPE,
+        node_mask_type=None,
+        edge_mask_type=EDGE_MASK_OBJECT,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+def _build_pg_explainer(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    epochs: int = DEFAULT_PG_EXPLAINER_EPOCHS,
+    lr: float = DEFAULT_PG_EXPLAINER_LR,
+    **kwargs: Any,
+) -> Explainer:
+    """PGExplainer — parametric edge-mask generator (phenomenon-only, requires training)."""
+    return Explainer(
+        model=model,
+        algorithm=PGExplainer(epochs=epochs, lr=lr),
+        explanation_type=PHENOMENON_EXPLANATION_TYPE,
+        node_mask_type=None,
+        edge_mask_type=EDGE_MASK_OBJECT,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+def _build_pgm_explainer(
+    model: torch.nn.Module,
+    *,
+    device: torch.device,
+    num_samples: int = DEFAULT_PGM_NUM_SAMPLES,
+    **kwargs: Any,
+) -> Explainer:
+    """PGMExplainer — perturbation + chi-square statistical test, node masks only."""
+    from torch_geometric.contrib.explain import PGMExplainer
+
+    class _DefaultBatchAndEdgeAttrWrapper(torch.nn.Module):
+        """Make `batch`/`edge_attr` optional for explainers that omit them.
+
+        PGMExplainer may call `model(x, edge_index, ...)` without supplying `batch`
+        (and sometimes `edge_attr`). Our base model (`MProGNN`) requires `batch`
+        and expects `edge_attr` when `edge_dim > 0`.
+        """
+
+        def __init__(self, base: torch.nn.Module):
+            super().__init__()
+            self.base = base
+
+        def forward(
+            self,
+            x: torch.Tensor,
+            edge_index: torch.Tensor,
+            batch: Optional[torch.Tensor] = None,
+            edge_attr: Optional[torch.Tensor] = None,
+            **model_kwargs: Any,
+        ) -> torch.Tensor:
+            if batch is None:
+                batch = torch.zeros(x.size(0), dtype=torch.long, device=x.device)
+
+            if edge_attr is None and edge_index is not None and edge_index.numel() > 0:
+                edge_dim = getattr(self.base, "edge_dim", 1)
+                edge_attr = torch.zeros(
+                    edge_index.size(1),
+                    edge_dim,
+                    dtype=x.dtype,
+                    device=x.device,
+                )
+
+            return self.base(x, edge_index, batch, edge_attr=edge_attr, **model_kwargs)
+
+    return Explainer(
+        model=_DefaultBatchAndEdgeAttrWrapper(model),
+        algorithm=PGMExplainer(num_samples=num_samples),
+        explanation_type=DEFAULT_EXPLANATION_TYPE,
+        node_mask_type=NODE_MASK_ATTRIBUTES,
+        edge_mask_type=None,
+        model_config=dict(DEFAULT_MODEL_CONFIG),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+AVAILABLE_EXPLAINERS: list[str] = [
+    "GRADEXPINODE",
+    "GRADEXPLEDGE",
+    "GUIDEDBP",
+    "IGNODE",
+    "IGEDGE",
+    "GNNEXPL",
+    "PGEXPL",
+    "PGMEXPL",
+]
+
+_EXPLAINER_SPECS: Dict[str, ExplainerSpec] = {
+    "GRADEXPINODE": ExplainerSpec(
+        name="GRADEXPINODE",
+        builder=_build_gradexp_node,
+        report_paragraph=(
+            "Mask type: node-feature mask (`node_mask_type=attributes`); no edge mask. "
+            "Method: Captum Saliency—gradient of the explained output with respect to node "
+            "features (typically absolute gradients). Fast, one backward pass per explanation."
+        ),
+        produces_node_mask=True,
+        produces_edge_mask=False,
+    ),
+    "GRADEXPLEDGE": ExplainerSpec(
+        name="GRADEXPLEDGE",
+        builder=_build_gradexp_edge,
+        report_paragraph=(
+            "Mask type: edge mask (`edge_mask_type=object`); no node-feature mask. "
+            "Method: Captum Saliency on PyG’s differentiable edge-mask input, so importance "
+            "is the sensitivity of the prediction to each edge when message passing respects "
+            "the mask. One backward pass per explanation."
+        ),
+        produces_node_mask=False,
+        produces_edge_mask=True,
+    ),
+    "GUIDEDBP": ExplainerSpec(
+        name="GUIDEDBP",
+        builder=_build_guided_bp,
+        report_paragraph=(
+            "Mask type: node-feature mask (`attributes`); no edge mask. "
+            "Method: Captum Guided Backpropagation—modified ReLU backward (non-negative "
+            "gradients) for sharper input attributions than plain gradients. Requires "
+            "`torch.nn.ReLU` modules; functional activations may not hook correctly."
+        ),
+        produces_node_mask=True,
+        produces_edge_mask=False,
+    ),
+    "IGNODE": ExplainerSpec(
+        name="IGNODE",
+        builder=_build_ig_node,
+        report_paragraph=(
+            "Mask type: node-feature mask (`attributes`); no edge mask. "
+            "Method: Integrated Gradients—path-integral attribution by averaging gradients "
+            "along paths from a baseline to the input (cost scales with `n_steps`). "
+            "Implemented here via a Captum-safe bridge over node features."
+        ),
+        produces_node_mask=True,
+        produces_edge_mask=False,
+    ),
+    "IGEDGE": ExplainerSpec(
+        name="IGEDGE",
+        builder=_build_ig_edge,
+        report_paragraph=(
+            "Mask type: edge mask (`object`); no node-feature mask. "
+            "Method: Integrated Gradients on the learnable edge-mask channel—same "
+            "path-integral idea as IG on features, but attributions are per edge and "
+            "runtime scales with the number of integration steps."
+        ),
+        produces_node_mask=False,
+        produces_edge_mask=True,
+    ),
+    "GNNEXPL": ExplainerSpec(
+        name="GNNEXPL",
+        builder=_build_gnn_explainer,
+        report_paragraph=(
+            "Mask type: edge mask only in this configuration (`edge_mask_type=object`); "
+            "no node mask. Method: PyG GNNExplainer—per-instance optimization of a soft "
+            "edge mask with sparsity and entropy regularization over many epochs. "
+            "Explanation is a local optimization problem, not a single-pass gradient map."
+        ),
+        produces_node_mask=False,
+        produces_edge_mask=True,
+    ),
+    "PGEXPL": ExplainerSpec(
+        name="PGEXPL",
+        builder=_build_pg_explainer,
+        report_paragraph=(
+            "Mask type: edge mask (`object`); phenomenon explanations only—no node-feature "
+            "mask. Method: PGExplainer trains a small MLP to predict edge masks; "
+            "`algorithm.train(...)` must complete before calling the explainer. "
+            "Amortized, parametric edge explanations rather than per-instance mask optimization."
+        ),
+        needs_training=True,
+        phenomenon_only=True,
+        produces_node_mask=False,
+        produces_edge_mask=True,
+    ),
+    "PGMEXPL": ExplainerSpec(
+        name="PGMEXPL",
+        builder=_build_pgm_explainer,
+        report_paragraph=(
+            "Mask type: node-feature mask (`attributes`); no edge mask (PGMExplainer does "
+            "not support edge masks). Method: perturbation plus statistical testing—sample "
+            "forward passes under feature perturbations and use chi-square conditional "
+            "independence (pgmpy) to mark significant nodes; classification-oriented."
+        ),
+        produces_node_mask=True,
+        produces_edge_mask=False,
+    ),
 }
 
 
-def get_builder(explainer_name: str):
-    """Return the builder callable for the given explainer. Raises ValueError if unknown."""
-    if explainer_name not in _EXPLAINER_BUILDERS:
+def get_spec(explainer_name: str) -> ExplainerSpec:
+    """Return the ExplainerSpec for the given name. Raises ValueError if unknown."""
+    if explainer_name not in _EXPLAINER_SPECS:
         raise ValueError(
             f"Unknown explainer: {explainer_name}. Available: {AVAILABLE_EXPLAINERS}"
         )
-    return _EXPLAINER_BUILDERS[explainer_name]
+    return _EXPLAINER_SPECS[explainer_name]
+
+
+def get_builder(explainer_name: str) -> Callable[..., Any]:
+    """Return the builder callable for the given explainer. Raises ValueError if unknown."""
+    return get_spec(explainer_name).builder
 
 
 def validate_explainer(name: str) -> str:
     """Validate and return the explainer name. Raises ValueError if unknown."""
-    if name not in _EXPLAINER_BUILDERS:
+    if name not in _EXPLAINER_SPECS:
         raise ValueError(
             f"Unknown explainer: {name}. Available: {AVAILABLE_EXPLAINERS}"
         )
     return name
+
+
+def explainer_report_meta() -> Dict[str, Dict[str, str]]:
+    """Mask-type + method blurbs for web reports (e.g. ``report_data.json``)."""
+    return {
+        name: {"report_paragraph": _EXPLAINER_SPECS[name].report_paragraph}
+        for name in AVAILABLE_EXPLAINERS
+    }

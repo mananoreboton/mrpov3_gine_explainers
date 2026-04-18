@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Generate visualization report from a previous explanation run: read explanation_report.json
-and masks from results/explanations/<timestamp>/<explainer>/, draw 2D molecules with bond coloring,
-write index.html and graphs under results/visualizations/<new_timestamp>/<explainer>/.
+Draw RDKit PNGs from saved explanation masks (single fold under results/folds/fold_*/)
+and write a static HTML report with explainer metrics, mask images, and raw mask JSON.
 
-If --timestamp is not passed, uses the latest explanation run folder.
 Usage:
   uv run python scripts/generate_visualizations.py
-  uv run python scripts/generate_visualizations.py --explainer GNNExplainer
-  uv run python scripts/generate_visualizations.py --explainers GNNExplainer SubgraphX [--timestamp 2026-03-15_133711]
+  uv run python scripts/generate_visualizations.py --report-only
+  uv run python scripts/generate_visualizations.py --no-report
+
+Reads ``mprov3_explainer/results`` and ligand SDFs from the workspace default MPro snapshot
+(unless ``--report-only``). The report is written to
+``results/folds/fold_*/explanation_web_report/index.html`` with relative links to
+``visualizations/`` and embedded mask JSON; open the file in a browser (no HTTP server required).
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
@@ -33,148 +35,154 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_EXPLANATIONS,
 )
 
-from mprov3_explainer import (
-    AVAILABLE_EXPLAINERS,
-    explanations_run_dir,
-    run_timestamp,
-    validate_explainer,
-    visualizations_run_dir,
-)
-from mprov3_explainer.paths import get_latest_timestamp_dir
-from mprov3_explainer.visualize import draw_molecule_with_mask, write_explanation_index_html
+from mprov3_explainer import AVAILABLE_EXPLAINERS, validate_explainer, visualizations_run_dir
+from mprov3_explainer.visualize import draw_molecule_with_mask
+from mprov3_explainer.web_report import write_fold_explanation_web_report
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate index and graphic explanations from a previous explanation run.",
+def _parse_args():
+    import argparse
+
+    p = argparse.ArgumentParser(
+        description=(
+            "Write mask PNGs from one fold of explainer outputs (RDKit) and/or emit a static "
+            "HTML report under explanation_web_report/. Uses mprov3_explainer/results."
+        ),
     )
-    parser.add_argument(
-        "--explainer",
-        type=str,
-        default=None,
-        help="Single explainer to visualize. Ignored if --explainers is set.",
+    p.add_argument(
+        "--no-report",
+        action="store_true",
+        help="Skip writing explanation_web_report/index.html.",
     )
-    parser.add_argument(
-        "--explainers",
-        type=str,
-        nargs="*",
-        default=None,
-        help=f"Explainers to visualize (default: all: {AVAILABLE_EXPLAINERS}).",
+    p.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Only regenerate the HTML report from existing explanations/ and visualizations/ "
+        "(no RDKit drawing; does not require MPro SDFs).",
     )
-    parser.add_argument(
-        "--timestamp",
-        type=str,
-        default=None,
-        help="Explanation run folder name under results/explanations/ (default: latest).",
-    )
-    parser.add_argument(
-        "--data_root",
-        type=str,
-        default=None,
-        help="Path to raw MPro snapshot (Ligand/Ligand_SDF/); default from gnn config.",
-    )
-    parser.add_argument(
-        "--results_root",
-        type=str,
-        default=None,
-        help="Root for results (default: mprov3_explainer/results).",
-    )
-    return parser.parse_args()
+    return p.parse_args()
+
+
+def _discover_single_fold(results_root: Path) -> tuple[int, Path]:
+    """Return (fold_index, fold_root) for the unique fold that has explanation outputs."""
+    folds_parent = results_root / "folds"
+    if not folds_parent.is_dir():
+        raise FileNotFoundError(
+            f"No folds/ under {results_root}. Run scripts/run_explanations.py first.",
+        )
+    found: list[tuple[int, Path]] = []
+    for sub in sorted(folds_parent.iterdir()):
+        if not sub.is_dir() or not sub.name.startswith("fold_"):
+            continue
+        try:
+            fi = int(sub.name.removeprefix("fold_"))
+        except ValueError:
+            continue
+        exp_base = sub / RESULTS_EXPLANATIONS
+        if not exp_base.is_dir():
+            continue
+        has_any = False
+        for name in AVAILABLE_EXPLAINERS:
+            rep = exp_base / name / "explanation_report.json"
+            masks = exp_base / name / "masks"
+            if rep.is_file() and masks.is_dir():
+                has_any = True
+                break
+        if has_any:
+            found.append((fi, sub))
+    if not found:
+        raise FileNotFoundError(
+            f"No explainer outputs under {folds_parent}/*/explanations/. "
+            "Run run_explanations.py first.",
+        )
+    if len(found) > 1:
+        ids = [f[0] for f in found]
+        raise FileNotFoundError(
+            f"Multiple folds with explanations: {ids}. "
+            "Keep a single fold under results/folds/ or remove stale outputs.",
+        )
+    return found[0]
+
+
+def _explainers_in_fold(explanations_base: Path) -> list[str]:
+    present: list[str] = []
+    for name in AVAILABLE_EXPLAINERS:
+        d = explanations_base / name
+        if (
+            d.is_dir()
+            and (d / "explanation_report.json").is_file()
+            and (d / "masks").is_dir()
+        ):
+            present.append(name)
+    return present
 
 
 def main() -> None:
     args = _parse_args()
+    results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
+    if not results_root.exists():
+        raise FileNotFoundError(f"Results root not found: {results_root}")
 
-    explainer_names = (
-        args.explainers
-        if args.explainers
-        else ([args.explainer] if args.explainer is not None else AVAILABLE_EXPLAINERS)
-    )
-    for name in explainer_names:
-        validate_explainer(name)
+    fold_index, fold_root = _discover_single_fold(results_root)
+    explanations_base = fold_root / RESULTS_EXPLANATIONS
+    explainer_names = _explainers_in_fold(explanations_base)
+    if not explainer_names:
+        raise FileNotFoundError(f"No explainer dirs with masks under {explanations_base}")
+    for n in explainer_names:
+        validate_explainer(n)
 
-    results_root = Path(args.results_root or _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME)
-    explanations_base = results_root / RESULTS_EXPLANATIONS
-    if not explanations_base.exists():
-        raise FileNotFoundError(
-            f"Explanations folder not found: {explanations_base}. Run run_explanations.py first."
-        )
-
-    if args.timestamp:
-        timestamp_dir = explanations_base / args.timestamp
-        if not timestamp_dir.is_dir():
-            raise FileNotFoundError(f"Explanation run not found: {timestamp_dir}")
-        ts = args.timestamp
-    else:
-        timestamp_dir = get_latest_timestamp_dir(explanations_base)
-        if timestamp_dir is None:
-            raise FileNotFoundError(
-                f"No timestamped run found under {explanations_base}. Run run_explanations.py first."
-            )
-        ts = timestamp_dir.name
-
-    if args.data_root is not None:
-        data_root = Path(args.data_root)
-    else:
+    if args.report_only:
+        print(f"Fold {fold_index}: --report-only (skipping RDKit PNG generation)", flush=True)
+    if not args.report_only:
         data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
-    if not data_root.exists():
-        raise FileNotFoundError(f"Data root not found: {data_root}")
-    sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
-    if not sdf_dir.exists():
-        raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
+        if not data_root.exists():
+            raise FileNotFoundError(f"Data root not found: {data_root}")
+        sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
+        if not sdf_dir.is_dir():
+            raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
 
-    new_ts = run_timestamp()
+        print(f"Fold {fold_index}: writing PNGs for {', '.join(explainer_names)}", flush=True)
 
-    for explainer_name in explainer_names:
-        explanation_dir = explanations_run_dir(results_root, ts, explainer_name)
-        if not explanation_dir.is_dir():
-            print(f"  Skip {explainer_name}: no folder at {explanation_dir}")
-            continue
+        for explainer_name in explainer_names:
+            explanation_dir = explanations_base / explainer_name
+            report = json.loads(
+                (explanation_dir / "explanation_report.json").read_text(encoding="utf-8"),
+            )
+            masks_dir = explanation_dir / "masks"
+            vis_out = visualizations_run_dir(fold_root, explainer_name)
+            graphs_dir = vis_out / "graphs"
+            graphs_dir.mkdir(parents=True, exist_ok=True)
 
-        report_path = explanation_dir / "explanation_report.json"
-        if not report_path.exists():
-            print(f"  Skip {explainer_name}: report not found at {report_path}")
-            continue
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+            drawn = 0
+            for e in report.get("per_graph", []):
+                graph_id = e.get("graph_id", "")
+                if not graph_id:
+                    continue
+                mask_path = masks_dir / f"{graph_id}.json"
+                if not mask_path.is_file():
+                    continue
+                mask_data = json.loads(mask_path.read_text(encoding="utf-8"))
+                edge_index = mask_data.get("edge_index")
+                edge_mask = mask_data.get("edge_mask")
+                node_mask = mask_data.get("node_mask")
+                if edge_index is None and node_mask is None:
+                    continue
+                sdf_path = sdf_dir / f"{graph_id}_ligand.sdf"
+                out_png = graphs_dir / f"mask_{graph_id}.png"
+                if draw_molecule_with_mask(
+                    sdf_path,
+                    edge_index=edge_index,
+                    edge_mask=edge_mask,
+                    out_path_png=out_png,
+                    node_mask=node_mask,
+                ):
+                    drawn += 1
+                    print(f"  {explainer_name}: {out_png.relative_to(fold_root)}", flush=True)
+            print(f"{explainer_name}: {drawn} image(s) under {vis_out}", flush=True)
 
-        vis_out = visualizations_run_dir(results_root, new_ts, explainer_name)
-        graphs_dir = vis_out / "graphs"
-        graphs_dir.mkdir(parents=True, exist_ok=True)
-
-        masks_dir = explanation_dir / "masks"
-        if not masks_dir.exists():
-            print(f"  Skip {explainer_name}: masks folder not found at {masks_dir}")
-            continue
-
-        report["source_explanation_timestamp"] = ts
-        report["explainer"] = explainer_name
-        drawn = 0
-        for e in report.get("per_graph", []):
-            graph_id = e.get("graph_id", "")
-            if not graph_id:
-                continue
-            mask_path = masks_dir / f"{graph_id}.json"
-            if not mask_path.exists():
-                print(f"    Skip {graph_id}: mask file not found")
-                continue
-            mask_data = json.loads(mask_path.read_text(encoding="utf-8"))
-            edge_index = mask_data.get("edge_index")
-            edge_mask = mask_data.get("edge_mask")
-            if edge_index is None or edge_mask is None:
-                print(f"    Skip {graph_id}: missing edge_index or edge_mask")
-                continue
-            sdf_path = sdf_dir / f"{graph_id}_ligand.sdf"
-            out_png = graphs_dir / f"mask_{graph_id}.png"
-            if draw_molecule_with_mask(sdf_path, edge_index, edge_mask, out_png):
-                drawn += 1
-                print(f"  {explainer_name} / {graph_id} -> {out_png.name}")
-
-        write_explanation_index_html(vis_out, report)
-        print(f"\n{explainer_name}: visualizations written to {vis_out}")
-        print(f"  Index: {vis_out / 'index.html'}")
-        print(f"  Images: {drawn} in {graphs_dir}")
-
-    print(f"\nRun timestamp: {new_ts}")
+    if not args.no_report:
+        out_html = write_fold_explanation_web_report(fold_root, fold_index, explainer_names)
+        print(f"Web report written: {out_html}", flush=True)
 
 
 if __name__ == "__main__":

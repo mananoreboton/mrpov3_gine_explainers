@@ -117,29 +117,43 @@ def load_splits(
     val_file: str,
     test_file: str,
     num_folds: int,
+    *,
+    use_validation: bool = True,
 ) -> List[Tuple[List[str], List[str], List[str]]]:
     """
-    Load train/val/test splits from three files in the Splits folder.
+    Load train/val/test splits from the Splits folder.
     Each file must contain num_folds lists of PDB IDs. Returns one (train_ids, val_ids, test_ids) per fold.
+    If use_validation is False, only train and test files are read; val_ids are always [] per fold.
     """
     splits_dir = data_root / MPRO_SPLITS_DIR
     train_path = splits_dir / train_file
-    val_path = splits_dir / val_file
     test_path = splits_dir / test_file
-    for p, name in [(train_path, "train"), (val_path, "val"), (test_path, "test")]:
+    for p, name in [(train_path, "train"), (test_path, "test")]:
         if not p.exists():
             raise FileNotFoundError(f"Split file not found: {p}")
     train_folds = _parse_split_file(train_path)
-    val_folds = _parse_split_file(val_path)
     test_folds = _parse_split_file(test_path)
-    n = min(len(train_folds), len(val_folds), len(test_folds))
+    if use_validation:
+        val_path = splits_dir / val_file
+        if not val_path.exists():
+            raise FileNotFoundError(f"Split file not found: {val_path}")
+        val_folds = _parse_split_file(val_path)
+        n = min(len(train_folds), len(val_folds), len(test_folds))
+    else:
+        val_folds = None
+        n = min(len(train_folds), len(test_folds))
     if n < num_folds:
         raise ValueError(
             f"Split files have {n} folds but num_folds={num_folds}. "
             f"Each file must contain at least {num_folds} lists."
         )
+    if use_validation:
+        return [
+            (train_folds[k], val_folds[k], test_folds[k])
+            for k in range(num_folds)
+        ]
     return [
-        (train_folds[k], val_folds[k], test_folds[k])
+        (train_folds[k], [], test_folds[k])
         for k in range(num_folds)
     ]
 
@@ -212,14 +226,24 @@ def get_train_val_test_indices(
     num_folds: int,
     fold_index: int,
     dataset_pdb_order: Optional[List[str]] = None,
+    *,
+    use_validation: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Load train/val/test split from three files and map PDB IDs to dataset indices.
     If dataset_pdb_order is provided (PDB IDs in same order as the built dataset), indices
     are in [0, len(dataset)-1]. Otherwise uses sorted(Info.csv) order (may be out of range
     if the dataset has fewer samples than Info.csv).
+    If use_validation is False, val_file is not read and val indices are empty.
     """
-    folds_tuples = load_splits(data_root, train_file, val_file, test_file, num_folds)
+    folds_tuples = load_splits(
+        data_root,
+        train_file,
+        val_file,
+        test_file,
+        num_folds,
+        use_validation=use_validation,
+    )
     k = min(fold_index, num_folds - 1) if num_folds > 0 else 0
     train_ids = set(folds_tuples[k][0])
     val_ids = set(folds_tuples[k][1])
