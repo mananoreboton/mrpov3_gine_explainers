@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import random
 import sys
 import time
 from dataclasses import dataclass
@@ -61,6 +63,8 @@ from mprov3_gine_explainer_defaults import (
     resolve_checkpoint_path,
 )
 
+import numpy as np
+
 from mprov3_explainer import (
     AVAILABLE_EXPLAINERS,
     ExplanationResult,
@@ -72,9 +76,15 @@ from mprov3_explainer import (
     validate_explainer,
 )
 from mprov3_explainer.explainers import get_spec
+from mprov3_explainer.pipeline import (
+    DEFAULT_PAPER_N_THRESHOLDS,
+    DEFAULT_TOP_K_FRACTION,
+    nanmean,
+)
 
-PAPER_N_THRESHOLDS = 100
+PAPER_N_THRESHOLDS = DEFAULT_PAPER_N_THRESHOLDS
 MASK_SPREAD_TOLERANCE = 1e-3
+DEFAULT_SEED = 42
 
 
 @dataclass
@@ -127,7 +137,40 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable τ=1e⁻³ degenerate-mask discard (default: filter on).",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        help=(
+            f"RNG seed for torch / numpy / random / PyG (default: {DEFAULT_SEED}). "
+            "Pin to make PGExplainer / PGMExplainer / IG runs reproducible."
+        ),
+    )
+    parser.add_argument(
+        "--top_k_fraction",
+        type=float,
+        default=DEFAULT_TOP_K_FRACTION,
+        help=(
+            "Fraction of top-ranked entries kept by the GraphFramEx-style "
+            f"top-k binarized fidelity (default: {DEFAULT_TOP_K_FRACTION})."
+        ),
+    )
     return parser.parse_args()
+
+
+def _seed_everything(seed: int) -> None:
+    """Pin every RNG used downstream so PGExplainer / PGMExplainer / IG are reproducible."""
+    random.seed(seed)
+    np.random.seed(seed)
+    import torch as _torch
+    _torch.manual_seed(seed)
+    if _torch.cuda.is_available():
+        _torch.cuda.manual_seed_all(seed)
+    try:
+        from torch_geometric import seed_everything as _pyg_seed
+        _pyg_seed(seed)
+    except Exception:
+        pass
 
 
 def _get_graph_id(data: Any, index: int) -> str:
@@ -222,9 +265,28 @@ def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunCon
     )
 
 
+def _nan_to_none(value: Any) -> Any:
+    """JSON-safe NaN/inf -> None mapper.
+
+    Standard ``json.dumps`` emits the literal token ``NaN`` (which is not valid
+    JSON), so we convert NaN and ±inf to ``None`` (rendered as ``null``).
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _fmt(x: float) -> str:
+    """Pretty-print a float that may be NaN."""
+    return "nan" if isinstance(x, float) and math.isnan(x) else f"{x:.4f}"
+
+
 def run_one_explainer(
     ctx: ExplanationRunContext,
     explainer_name: str,
+    *,
+    top_k_fraction: float = DEFAULT_TOP_K_FRACTION,
+    seed: int = DEFAULT_SEED,
 ) -> tuple[dict, list[dict]]:
     """Drive pipeline for one explainer: explain → metrics → per-graph JSON + report dict."""
     spec = get_spec(explainer_name)
@@ -258,34 +320,71 @@ def run_one_explainer(
         pg_train_max_graphs=None,
         paper_metrics=True,
         paper_n_thresholds=PAPER_N_THRESHOLDS,
+        top_k_fraction=top_k_fraction,
         **explainer_kwargs,
     ):
         results.append(result)
         print(
-            f"  {result.graph_id}: fid+={result.fidelity_fid_plus:.4f} "
-            f"fid-={result.fidelity_fid_minus:.4f}"
-            f" char={result.pyg_characterization:.4f}"
-            f" Fsuf={result.paper_sufficiency:.4f}"
-            f" Fcom={result.paper_comprehensiveness:.4f}"
-            f" Ff1={result.paper_f1_fidelity:.4f}"
+            f"  {result.graph_id}: fid+={_fmt(result.fidelity_fid_plus)} "
+            f"fid-={_fmt(result.fidelity_fid_minus)}"
+            f" char={_fmt(result.pyg_characterization)}"
+            f" Fsuf={_fmt(result.paper_sufficiency)}"
+            f" Fcom={_fmt(result.paper_comprehensiveness)}"
+            f" Ff1={_fmt(result.paper_f1_fidelity)}"
             + ("" if result.valid else " [excluded]")
             + (f" ({result.elapsed_s:.2f}s)" if result.elapsed_s > 0 else "")
         )
     wall_time = time.perf_counter() - t0
 
-    mean_fid_plus, mean_fid_minus = aggregate_fidelity(results, valid_only=False)
-    mean_char = sum(r.pyg_characterization for r in results) / len(results) if results else 0.0
-    mean_fsuf = sum(r.paper_sufficiency for r in results) / len(results) if results else 0.0
-    mean_fcom = sum(r.paper_comprehensiveness for r in results) / len(results) if results else 0.0
-    mean_ff1 = sum(r.paper_f1_fidelity for r in results) / len(results) if results else 0.0
-    n_valid = sum(1 for r in results if r.valid)
-    print(f"Mean fidelity (fid+): {mean_fid_plus:.4f}")
-    print(f"Mean fidelity (fid-): {mean_fid_minus:.4f}")
-    print(f"Mean characterization (PyG): {mean_char:.4f}")
-    print(f"Mean paper sufficiency (Fsuf): {mean_fsuf:.4f}")
-    print(f"Mean paper comprehensiveness (Fcom): {mean_fcom:.4f}")
-    print(f"Mean paper F1-fidelity (Ff1): {mean_ff1:.4f}")
-    print(f"Explained {len(results)} graphs ({n_valid} valid) in {wall_time:.1f}s.")
+    valid_results = [r for r in results if r.valid]
+    n_valid = len(valid_results)
+
+    # Headline means: NaN-aware, valid-only. These hold the corrected
+    # (top-k binarized GraphFramEx) fidelity / characterization numbers and
+    # the clamped Longa F1-fidelity.
+    mean_fid_plus, mean_fid_minus = aggregate_fidelity(
+        valid_results, valid_only=False, nan_skip=True,
+    )
+    mean_char = nanmean([r.pyg_characterization for r in valid_results])
+    mean_fsuf = nanmean([r.paper_sufficiency for r in valid_results])
+    mean_fcom = nanmean([r.paper_comprehensiveness for r in valid_results])
+    mean_ff1 = nanmean([r.paper_f1_fidelity for r in valid_results])
+
+    # Legacy / diagnostic siblings: same metric over *every* graph (the old
+    # behaviour) and the soft-mask GraphFramEx values for backwards
+    # compatibility with reports produced before the metric fix.
+    mean_fid_plus_all, mean_fid_minus_all = aggregate_fidelity(
+        results, valid_only=False, nan_skip=True,
+    )
+    mean_char_all = nanmean([r.pyg_characterization for r in results])
+    mean_fsuf_all = nanmean([r.paper_sufficiency for r in results])
+    mean_fcom_all = nanmean([r.paper_comprehensiveness for r in results])
+    mean_ff1_all = nanmean([r.paper_f1_fidelity for r in results])
+
+    mean_fid_plus_soft = nanmean([r.fidelity_fid_plus_soft for r in valid_results])
+    mean_fid_minus_soft = nanmean([r.fidelity_fid_minus_soft for r in valid_results])
+    mean_char_soft = nanmean([r.pyg_characterization_soft for r in valid_results])
+
+    # Diagnostics (per-explainer)
+    num_degenerate_mask = sum(1 for r in results if r.mask_spread < MASK_SPREAD_TOLERANCE)
+    num_misclassified = sum(1 for r in results if not r.correct_class)
+    mean_mask_spread = nanmean([r.mask_spread for r in results])
+    mean_mask_entropy = nanmean([r.mask_entropy for r in results])
+
+    print(f"Mean fidelity (fid+, top-k={top_k_fraction}): {_fmt(mean_fid_plus)}  "
+          f"[soft: {_fmt(mean_fid_plus_soft)}]")
+    print(f"Mean fidelity (fid-, top-k={top_k_fraction}): {_fmt(mean_fid_minus)}  "
+          f"[soft: {_fmt(mean_fid_minus_soft)}]")
+    print(f"Mean characterization (PyG, top-k): {_fmt(mean_char)}  "
+          f"[soft: {_fmt(mean_char_soft)}]")
+    print(f"Mean paper sufficiency (Fsuf): {_fmt(mean_fsuf)}")
+    print(f"Mean paper comprehensiveness (Fcom): {_fmt(mean_fcom)}")
+    print(f"Mean paper F1-fidelity (Ff1, clamped): {_fmt(mean_ff1)}")
+    print(
+        f"Explained {len(results)} graphs ({n_valid} valid, "
+        f"{num_degenerate_mask} degenerate, {num_misclassified} misclassified) "
+        f"in {wall_time:.1f}s."
+    )
 
     out_path = explanations_run_dir(ctx.explainer_results_root, explainer_name)
     if out_path.exists() and any(out_path.iterdir()):
@@ -299,6 +398,9 @@ def run_one_explainer(
             "fidelity_plus": r.fidelity_fid_plus,
             "fidelity_minus": r.fidelity_fid_minus,
             "pyg_characterization": r.pyg_characterization,
+            "fidelity_plus_soft": r.fidelity_fid_plus_soft,
+            "fidelity_minus_soft": r.fidelity_fid_minus_soft,
+            "pyg_characterization_soft": r.pyg_characterization_soft,
             "paper_sufficiency": r.paper_sufficiency,
             "paper_comprehensiveness": r.paper_comprehensiveness,
             "paper_f1_fidelity": r.paper_f1_fidelity,
@@ -306,24 +408,47 @@ def run_one_explainer(
             "correct_class": r.correct_class,
             "has_node_mask": r.has_node_mask,
             "has_edge_mask": r.has_edge_mask,
+            "mask_spread": r.mask_spread,
+            "mask_entropy": r.mask_entropy,
             "elapsed_s": r.elapsed_s,
         })
 
     report = {
+        # Headline (corrected) fields keep their original key names so
+        # downstream readers - including the HTML report - keep working.
         "mean_fidelity_plus": mean_fid_plus,
         "mean_fidelity_minus": mean_fid_minus,
         "mean_pyg_characterization": mean_char,
         "mean_paper_sufficiency": mean_fsuf,
         "mean_paper_comprehensiveness": mean_fcom,
         "mean_paper_f1_fidelity": mean_ff1,
+        # Legacy siblings: same metric over every graph and / or with the
+        # legacy soft-mask GraphFramEx fidelity. Provided so anyone diffing
+        # against the pre-fix report can still recover the old numbers.
+        "mean_fidelity_plus_all_graphs": mean_fid_plus_all,
+        "mean_fidelity_minus_all_graphs": mean_fid_minus_all,
+        "mean_pyg_characterization_all_graphs": mean_char_all,
+        "mean_paper_sufficiency_all_graphs": mean_fsuf_all,
+        "mean_paper_comprehensiveness_all_graphs": mean_fcom_all,
+        "mean_paper_f1_fidelity_all_graphs": mean_ff1_all,
+        "mean_fidelity_plus_soft": mean_fid_plus_soft,
+        "mean_fidelity_minus_soft": mean_fid_minus_soft,
+        "mean_pyg_characterization_soft": mean_char_soft,
+        # Diagnostics
         "num_graphs": len(results),
         "num_valid": n_valid,
+        "num_degenerate_mask": num_degenerate_mask,
+        "num_misclassified": num_misclassified,
+        "mean_mask_spread": mean_mask_spread,
+        "mean_mask_entropy": mean_mask_entropy,
+        "top_k_fraction": float(top_k_fraction),
+        "seed": int(seed),
         "explainer": explainer_name,
         "wall_time_s": wall_time,
         "per_graph": per_graph_entries,
     }
     (out_path / "explanation_report.json").write_text(
-        json.dumps(report, indent=2), encoding="utf-8",
+        json.dumps(report, indent=2, default=_nan_to_none), encoding="utf-8",
     )
 
     masks_dir = out_path / "masks"
@@ -360,8 +485,23 @@ def run_one_explainer(
         "mean_paper_sufficiency": mean_fsuf,
         "mean_paper_comprehensiveness": mean_fcom,
         "mean_paper_f1_fidelity": mean_ff1,
+        "mean_fid_plus_all_graphs": mean_fid_plus_all,
+        "mean_fid_minus_all_graphs": mean_fid_minus_all,
+        "mean_pyg_characterization_all_graphs": mean_char_all,
+        "mean_paper_sufficiency_all_graphs": mean_fsuf_all,
+        "mean_paper_comprehensiveness_all_graphs": mean_fcom_all,
+        "mean_paper_f1_fidelity_all_graphs": mean_ff1_all,
+        "mean_fid_plus_soft": mean_fid_plus_soft,
+        "mean_fid_minus_soft": mean_fid_minus_soft,
+        "mean_pyg_characterization_soft": mean_char_soft,
         "num_graphs": len(results),
         "num_valid": n_valid,
+        "num_degenerate_mask": num_degenerate_mask,
+        "num_misclassified": num_misclassified,
+        "mean_mask_spread": mean_mask_spread,
+        "mean_mask_entropy": mean_mask_entropy,
+        "top_k_fraction": float(top_k_fraction),
+        "seed": int(seed),
         "wall_time_s": wall_time,
     }
     return summary, per_graph_entries
@@ -376,6 +516,8 @@ def write_comparison_report(
     explainer_names: list[str],
     all_summaries: dict[str, dict],
     all_per_graph: dict[str, list[dict]],
+    seed: int,
+    top_k_fraction: float,
 ) -> Path:
     """Write cross-explainer comparison JSON (Longa-style aggregation over the split)."""
     comparison_path = explainer_results_root / RESULTS_EXPLANATIONS
@@ -386,17 +528,27 @@ def write_comparison_report(
         "fold_index": fold_index,
         "fold_metric": fold_metric,
         "split": split_name,
+        "seed": int(seed),
+        "top_k_fraction": float(top_k_fraction),
         "explainers": explainer_names,
         "per_explainer": all_summaries,
         "per_graph_per_explainer": all_per_graph,
     }
     json_path = comparison_path / "comparison_report.json"
-    json_path.write_text(json.dumps(comparison, indent=2), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(comparison, indent=2, default=_nan_to_none), encoding="utf-8",
+    )
     return json_path
 
 
 def main() -> None:
     args = parse_args()
+    _seed_everything(args.seed)
+    print(
+        f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}; "
+        f"top-k fidelity fraction={args.top_k_fraction}",
+        flush=True,
+    )
 
     for name in AVAILABLE_EXPLAINERS:
         validate_explainer(name)
@@ -408,7 +560,15 @@ def main() -> None:
     all_per_graph: dict[str, list[dict]] = {}
 
     for explainer_name in explainer_names:
-        summary, per_graph = run_one_explainer(ctx, explainer_name)
+        # Re-seed before each explainer so the order of explainers does not
+        # affect their individual results.
+        _seed_everything(args.seed)
+        summary, per_graph = run_one_explainer(
+            ctx,
+            explainer_name,
+            top_k_fraction=args.top_k_fraction,
+            seed=args.seed,
+        )
         all_summaries[explainer_name] = summary
         all_per_graph[explainer_name] = per_graph
 
@@ -420,6 +580,8 @@ def main() -> None:
         explainer_names=explainer_names,
         all_summaries=all_summaries,
         all_per_graph=all_per_graph,
+        seed=args.seed,
+        top_k_fraction=args.top_k_fraction,
     )
     print(f"\nComparison report: {json_path}")
 

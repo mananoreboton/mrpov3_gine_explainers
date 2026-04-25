@@ -96,12 +96,17 @@ def write_fold_explanation_web_report(
                 img_block = '<p class="muted">PNG not rendered (missing or draw failed).</p>'
 
             per_keys = [
-                ("fidelity_plus", "Fid+"),
-                ("fidelity_minus", "Fid−"),
-                ("pyg_characterization", "PyG char"),
+                ("fidelity_plus", "Fid+ (top-k)"),
+                ("fidelity_minus", "Fid− (top-k)"),
+                ("pyg_characterization", "PyG char (top-k)"),
+                ("fidelity_plus_soft", "Fid+ (soft)"),
+                ("fidelity_minus_soft", "Fid− (soft)"),
+                ("pyg_characterization_soft", "PyG char (soft)"),
                 ("paper_sufficiency", "Fsuf"),
                 ("paper_comprehensiveness", "Fcom"),
-                ("paper_f1_fidelity", "Ff1"),
+                ("paper_f1_fidelity", "Ff1 (clamped)"),
+                ("mask_spread", "Mask spread"),
+                ("mask_entropy", "Mask entropy"),
                 ("valid", "valid"),
                 ("correct_class", "correct class"),
                 ("has_node_mask", "node mask"),
@@ -136,6 +141,12 @@ def write_fold_explanation_web_report(
         )
 
     # Summary table
+    #
+    # The first 10 columns keep their original key/label/order so existing
+    # dashboards, screenshots and bookmarks still match. New diagnostic
+    # columns (top-k soft fidelity, degenerate mask count, mean mask spread)
+    # are appended at the end and fall back to "—" via _fmt_num if the
+    # JSON does not carry the key (i.e. for older reports).
     sum_cols = [
         ("explainer", "Explainer", "text"),
         ("mean_fidelity_plus", "Mean Fid+", "num"),
@@ -147,6 +158,13 @@ def write_fold_explanation_web_report(
         ("num_graphs", "Graphs", "num"),
         ("num_valid", "Valid", "num"),
         ("wall_time_s", "Wall (s)", "num"),
+        ("mean_fidelity_plus_soft", "Mean Fid+ (soft)", "num"),
+        ("mean_fidelity_minus_soft", "Mean Fid− (soft)", "num"),
+        ("mean_pyg_characterization_soft", "Mean PyG char (soft)", "num"),
+        ("num_degenerate_mask", "Degen.", "num"),
+        ("num_misclassified", "Misclass.", "num"),
+        ("mean_mask_spread", "Spread", "num"),
+        ("mean_mask_entropy", "Entropy", "num"),
     ]
     thead = "".join(
         f'<th data-sort="{html.escape(key)}" data-type="{tp}">{html.escape(label)}</th>'
@@ -164,11 +182,27 @@ def write_fold_explanation_web_report(
                 f"{_fmt_num(val)}</td>"
             )
         tbody_rows.append("<tr>" + "".join(cells) + "</tr>")
-    tbody = "\n".join(tbody_rows) if tbody_rows else "<tr><td colspan=\"10\">No data</td></tr>"
+    tbody = (
+        "\n".join(tbody_rows)
+        if tbody_rows
+        else f'<tr><td colspan="{len(sum_cols)}">No data</td></tr>'
+    )
 
     gen_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     comp_block = ""
     if comparison:
+        seed_val = comparison.get("seed")
+        topk_val = comparison.get("top_k_fraction")
+        seed_dt = (
+            f"<dt>seed</dt><dd>{html.escape(str(seed_val))}</dd>"
+            if seed_val is not None
+            else ""
+        )
+        topk_dt = (
+            f"<dt>top_k_fraction</dt><dd>{html.escape(str(topk_val))}</dd>"
+            if topk_val is not None
+            else ""
+        )
         comp_block = (
             "<h3>Comparison report (on disk)</h3>"
             "<dl class=\"meta-dl\">"
@@ -176,6 +210,7 @@ def write_fold_explanation_web_report(
             f"<dt>fold_index</dt><dd>{html.escape(str(comparison.get('fold_index', '')))}</dd>"
             f"<dt>fold_metric</dt><dd>{html.escape(str(comparison.get('fold_metric', '')))}</dd>"
             f"<dt>split</dt><dd>{html.escape(str(comparison.get('split', '')))}</dd>"
+            f"{seed_dt}{topk_dt}"
             "</dl>"
         )
 
