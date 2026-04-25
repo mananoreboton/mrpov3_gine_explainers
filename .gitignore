@@ -63,3 +63,4 @@ results/
 .cache/
 
 *.zip
+extra/*
