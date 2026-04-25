@@ -3,9 +3,11 @@ mprov3-ui — zero-dependency HTTP server for GINE + Explainer result sites.
 
 Routes
 ------
-/           landing page (inline HTML)
-/gine/      mprov3_gine/results/visualizations/
-/explainer/ mprov3_explainer/results/folds/fold_0/explanation_web_report/
+/                landing page (inline HTML)
+/gine/           mprov3_gine/results/visualizations/
+/classifications/ mprov3_gine/results/classifications/
+/explainer/      mprov3_explainer/results/folds/fold_0/explanation_web_report/
+/visualizations/ mprov3_explainer/results/folds/fold_0/visualizations/
 """
 
 from __future__ import annotations
@@ -30,10 +32,11 @@ _ROOT = _HERE.parents[2]
 _EXPLAINER_FOLD = _ROOT / "mprov3_explainer" / "results" / "folds" / "fold_0"
 
 _ROUTES: dict[str, Path] = {
-    "/gine/": _ROOT / "mprov3_gine" / "results" / "visualizations",
-    "/explainer/": _EXPLAINER_FOLD / "explanation_web_report",
+    "/gine/":             _ROOT / "mprov3_gine" / "results" / "visualizations",
+    "/classifications/":  _ROOT / "mprov3_gine" / "results" / "classifications",
+    "/explainer/":        _EXPLAINER_FOLD / "explanation_web_report",
     # The explainer HTML uses absolute paths like /visualizations/… for images
-    "/visualizations/": _EXPLAINER_FOLD / "visualizations",
+    "/visualizations/":   _EXPLAINER_FOLD / "visualizations",
 }
 
 # ---------------------------------------------------------------------------
@@ -66,9 +69,10 @@ _LANDING_HTML = """\
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 1.5rem;
       width: 100%;
-      max-width: 800px;
+      max-width: 900px;
     }
-    .card {
+    /* Plain link card (Explainer) */
+    a.card {
       background: #ffffff;
       border: 1px solid #d0d7de;
       border-radius: 10px;
@@ -76,14 +80,41 @@ _LANDING_HTML = """\
       text-decoration: none;
       color: inherit;
       transition: box-shadow 0.15s, border-color 0.15s;
+      display: block;
     }
-    .card:hover {
+    a.card:hover {
       box-shadow: 0 4px 16px rgba(0,0,0,0.10);
       border-color: #0969da;
     }
+    /* Group card (GINE) — not a link itself */
+    .card-group {
+      background: #ffffff;
+      border: 1px solid #d0d7de;
+      border-radius: 10px;
+      padding: 1.75rem 2rem;
+    }
     .card-icon { font-size: 2rem; margin-bottom: 0.75rem; }
-    .card h2 { font-size: 1.15rem; font-weight: 600; color: #0969da; }
-    .card p { margin-top: 0.4rem; font-size: 0.875rem; color: #656d76; line-height: 1.5; }
+    .card-group h2, a.card h2 { font-size: 1.15rem; font-weight: 600; color: #1f2328; margin-bottom: 0.25rem; }
+    .card-group p.card-desc, a.card p { margin-top: 0.4rem; font-size: 0.875rem; color: #656d76; line-height: 1.5; margin-bottom: 1rem; }
+    .sub-links { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
+    .sub-link {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.6rem 0.85rem;
+      background: #f5f7fa;
+      border: 1px solid #d0d7de;
+      border-radius: 7px;
+      text-decoration: none;
+      color: #0969da;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .sub-link:hover { background: #eaf0fb; border-color: #0969da; }
+    .sub-link .sl-icon { font-size: 1.1rem; }
+    .sub-link .sl-desc { font-size: 0.78rem; color: #656d76; font-weight: 400; margin-left: auto; }
+    a.card h2 { color: #0969da; }
     footer {
       margin-top: 3rem;
       font-size: 0.8rem;
@@ -94,14 +125,26 @@ _LANDING_HTML = """\
 <body>
   <header>
     <h1>MPro v3 — Results Dashboard</h1>
-    <p class="subtitle">Browse the GNN training visualizations and the explainer evaluation reports.</p>
+    <p class="subtitle">Browse the GNN training results and the explainer evaluation reports.</p>
   </header>
   <div class="cards">
-    <a class="card" href="/gine/">
+    <div class="card-group">
       <div class="card-icon">&#128202;</div>
-      <h2>GINE Visualizations</h2>
-      <p>Ligand-graph gallery with fold tabs, category labels, pIC50 values, and per-graph HTML pages.</p>
-    </a>
+      <h2>GINE Results</h2>
+      <p class="card-desc">GNN training outputs: ligand-graph visualizations and per-fold classification performance.</p>
+      <div class="sub-links">
+        <a class="sub-link" href="/gine/">
+          <span class="sl-icon">&#128444;</span>
+          Visualizations
+          <span class="sl-desc">graph gallery &amp; per-PDB pages</span>
+        </a>
+        <a class="sub-link" href="/classifications/">
+          <span class="sl-icon">&#9989;</span>
+          Classifications
+          <span class="sl-desc">fold accuracy &amp; correct/wrong grid</span>
+        </a>
+      </div>
+    </div>
     <a class="card" href="/explainer/">
       <div class="card-icon">&#128269;</div>
       <h2>Explainer Report</h2>
@@ -230,9 +273,10 @@ def main() -> None:
     server = ThreadingHTTPServer(("localhost", args.port), _Handler)
 
     print(f"mprov3-ui  →  {url}")
-    print(f"  /gine/            → {_ROUTES['/gine/']}")
-    print(f"  /explainer/       → {_ROUTES['/explainer/']}")
-    print(f"  /visualizations/  → {_ROUTES['/visualizations/']}")
+    print(f"  /gine/             → {_ROUTES['/gine/']}")
+    print(f"  /classifications/  → {_ROUTES['/classifications/']}")
+    print(f"  /explainer/        → {_ROUTES['/explainer/']}")
+    print(f"  /visualizations/   → {_ROUTES['/visualizations/']}")
     print("  Press Ctrl-C to stop.\n")
 
     if not args.no_browser:
