@@ -133,10 +133,16 @@ def _predict_target_proba(
     edge_attr: Optional[torch.Tensor],
     target_class: int,
 ) -> float:
-    with torch.no_grad():
-        logits = model(x, edge_index, batch, edge_attr)
-        probs = torch.softmax(logits, dim=-1)
-        return float(probs.squeeze(0)[target_class].item())
+    was_training = model.training
+    try:
+        model.eval()
+        with torch.no_grad():
+            logits = model(x, edge_index, batch, edge_attr)
+            probs = torch.softmax(logits, dim=-1)
+            return float(probs.squeeze(0)[target_class].item())
+    finally:
+        if was_training:
+            model.train()
 
 
 def _paper_normalized_node_mask_from_explanation(
@@ -521,6 +527,9 @@ def _forward_raw_explanation(
     raw_explanation = explainer(x, edge_index, **call_kwargs)
     elapsed = time.perf_counter() - t0
     model.to(device)
+    # Some explainers (PGMExplainer, GNNExplainer) internally toggle model.train();
+    # restore eval mode so BatchNorm/Dropout behave correctly during metric sweeps.
+    model.eval()
     raw_explanation = _coerce_explanation_device_dtype(raw_explanation, device)
     return raw_explanation, elapsed
 
