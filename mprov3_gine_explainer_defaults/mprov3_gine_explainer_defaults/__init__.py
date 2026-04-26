@@ -29,6 +29,7 @@ from mprov3_gine_explainer_defaults.training_defaults import (
     DEFAULT_SEED,
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
+    seed_everything,
 )
 from mprov3_gine_explainer_defaults.best_fold import (
     FoldMetric,
@@ -111,6 +112,7 @@ __all__ = [
     "DEFAULT_SEED",
     "DEFAULT_NUM_FOLDS",
     "DEFAULT_FOLD_INDEX",
+    "seed_everything",
     "DEFAULT_MPRO_SNAPSHOT_DIR_NAME",
     "MPRO_INFO_CSV",
     "MPRO_SPLITS_DIR",

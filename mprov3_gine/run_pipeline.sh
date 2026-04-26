@@ -34,7 +34,7 @@ banner "4/7 visualize_graphs.py"
 uv run python visualize_graphs.py
 
 banner "5/7 train.py"
-uv run python train.py
+uv run python train.py --seed 42
 
 banner "6/7 classify.py"
 uv run python classify.py

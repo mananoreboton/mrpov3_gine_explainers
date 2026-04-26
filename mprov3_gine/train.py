@@ -7,7 +7,6 @@ across folds. CLI flags are documented in README.md (Usage) and ``train.py --hel
 
 import argparse
 import json
-import secrets
 from pathlib import Path
 from typing import Optional
 
@@ -21,6 +20,7 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_OUT_CLASSES,
     DEFAULT_POOL,
     DEFAULT_RESULTS_ROOT,
+    DEFAULT_SEED,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
     DEFAULT_TRAINING_EPOCHS,
     DEFAULT_TRAINING_LR,
@@ -29,6 +29,7 @@ from mprov3_gine_explainer_defaults import (
     SplitConfig,
     resolve_dataset_dir,
     resolve_fold_indices,
+    seed_everything,
     training_checkpoint_path,
 )
 
@@ -158,8 +159,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--seed",
         type=int,
-        default=None,
-        help="Torch manual seed. If omitted, a random seed is chosen and logged.",
+        default=DEFAULT_SEED,
+        help=f"RNG seed for torch / numpy / random / PyG (default: {DEFAULT_SEED}).",
     )
     parser.add_argument(
         "--no_validation",
@@ -187,8 +188,8 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     log_path = out_dir / "train.log"
 
-    seed = args.seed if args.seed is not None else secrets.randbits(31)
-    torch.manual_seed(seed)
+    seed = args.seed
+    seed_everything(seed)
 
     ckpt_name = DEFAULT_TRAINING_CHECKPOINT_FILENAME
 

@@ -341,7 +341,7 @@ Split files list PDB IDs per fold; defaults are `train_index_folder.txt`, `valid
 | `--batch_size` | Loader batch size | `DEFAULT_BATCH_SIZE` |
 | `--lr` | Adam learning rate | `DEFAULT_TRAINING_LR` |
 | `--hidden`, `--num_layers`, `--dropout` | GINE width, depth, dropout | `DEFAULT_HIDDEN_CHANNELS`, `DEFAULT_NUM_LAYERS`, `DEFAULT_DROPOUT` |
-| `--seed` | Torch manual seed (omit = random seed each run, logged in `train.log`) | random |
+| `--seed` | RNG seed for torch / numpy / random / PyG | `DEFAULT_SEED` (42) |
 | `--no_validation` | Skip val split; checkpoint on train acc | off |
 
 Checkpoints are always saved as `DEFAULT_TRAINING_CHECKPOINT_FILENAME` (`best_gnn.pt`) under each `trainings/fold_<k>/`. Class count is fixed at `DEFAULT_OUT_CLASSES` (3).
@@ -418,7 +418,7 @@ You can reuse configs, loaders, and train/val/test logic in your own scripts.
 #### Configuration
 
 - `**SplitConfig**` (from `**mprov3_gine_explainer_defaults**`): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (use `BUILT_DATASET_FOLDER_NAME` / `"."` with `results/datasets` as loader root).
-- **Training hyperparameters** (`epochs`, `batch_size`, `lr`): defaults from `**mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`). For `seed`, pass `--seed`; if omitted, `train.py` picks a random seed and logs it in `train.log`.
+- **Training hyperparameters** (`epochs`, `batch_size`, `lr`): defaults from `**mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`). For `seed`, pass `--seed`; if omitted, defaults to `DEFAULT_SEED` (42) from `mprov3_gine_explainer_defaults`. The seed is applied via `seed_everything` which pins `random`, `numpy`, `torch`, and PyG RNGs.
 - `**model.MProGNN**`: GINE architecture; construct with hyperparameters (defaults align with `**mprov3_gine_explainer_defaults**` e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
 
 #### Data loaders

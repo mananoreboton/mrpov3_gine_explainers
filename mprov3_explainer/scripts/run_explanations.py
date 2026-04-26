@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import random
 import sys
 import time
 from dataclasses import dataclass
@@ -50,6 +49,7 @@ from mprov3_gine_explainer_defaults import (
     DEFAULT_PG_EXPLAINER_EPOCHS,
     DEFAULT_PGM_NUM_SAMPLES,
     DEFAULT_POOL,
+    DEFAULT_SEED,
     DEFAULT_TEST_SPLIT_FILE,
     DEFAULT_TRAIN_SPLIT_FILE,
     DEFAULT_TRAINING_CHECKPOINT_FILENAME,
@@ -61,9 +61,8 @@ from mprov3_gine_explainer_defaults import (
     read_num_folds_for_fold,
     resolve_best_fold_index,
     resolve_checkpoint_path,
+    seed_everything,
 )
-
-import numpy as np
 
 from mprov3_explainer import (
     AVAILABLE_EXPLAINERS,
@@ -84,7 +83,6 @@ from mprov3_explainer.pipeline import (
 
 PAPER_N_THRESHOLDS = DEFAULT_PAPER_N_THRESHOLDS
 MASK_SPREAD_TOLERANCE = 1e-3
-DEFAULT_SEED = 42
 
 
 @dataclass
@@ -156,21 +154,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
-
-
-def _seed_everything(seed: int) -> None:
-    """Pin every RNG used downstream so PGExplainer / PGMExplainer / IG are reproducible."""
-    random.seed(seed)
-    np.random.seed(seed)
-    import torch as _torch
-    _torch.manual_seed(seed)
-    if _torch.cuda.is_available():
-        _torch.cuda.manual_seed_all(seed)
-    try:
-        from torch_geometric import seed_everything as _pyg_seed
-        _pyg_seed(seed)
-    except Exception:
-        pass
 
 
 def _get_graph_id(data: Any, index: int) -> str:
@@ -543,7 +526,7 @@ def write_comparison_report(
 
 def main() -> None:
     args = parse_args()
-    _seed_everything(args.seed)
+    seed_everything(args.seed)
     print(
         f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}; "
         f"top-k fidelity fraction={args.top_k_fraction}",
@@ -562,7 +545,7 @@ def main() -> None:
     for explainer_name in explainer_names:
         # Re-seed before each explainer so the order of explainers does not
         # affect their individual results.
-        _seed_everything(args.seed)
+        seed_everything(args.seed)
         summary, per_graph = run_one_explainer(
             ctx,
             explainer_name,
