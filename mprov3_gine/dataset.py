@@ -5,8 +5,9 @@ Labels: pIC50 (regression) and Category (classification: -1, 0, 1 -> 0, 1, 2).
 """
 
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Set
 
+import numpy as np
 import pandas as pd
 from mprov3_gine_explainer_defaults import (
     MPRO_INFO_CSV,
@@ -156,6 +157,83 @@ def load_splits(
         (train_folds[k], [], test_folds[k])
         for k in range(num_folds)
     ]
+
+
+def get_unified_pool_pdb_ids(
+    data_root: Path,
+    train_file: str,
+    val_file: str,
+    test_file: str,
+    *,
+    use_validation: bool = True,
+) -> Set[str]:
+    """
+    Unique PDB IDs appearing in any train/val/test list across every fold in the split files.
+    Same files and layout as load_splits; uses all available folds (min length across files).
+    """
+    splits_dir = data_root / MPRO_SPLITS_DIR
+    train_path = splits_dir / train_file
+    test_path = splits_dir / test_file
+    for p, name in [(train_path, "train"), (test_path, "test")]:
+        if not p.exists():
+            raise FileNotFoundError(f"Split file not found: {p}")
+    train_folds = _parse_split_file(train_path)
+    test_folds = _parse_split_file(test_path)
+    if use_validation:
+        val_path = splits_dir / val_file
+        if not val_path.exists():
+            raise FileNotFoundError(f"Split file not found: {val_path}")
+        val_folds = _parse_split_file(val_path)
+        n = min(len(train_folds), len(val_folds), len(test_folds))
+    else:
+        val_folds = None
+        n = min(len(train_folds), len(test_folds))
+    if n < 1:
+        raise ValueError("Split files contain no folds (empty or invalid).")
+    all_ids: Set[str] = set()
+    for k in range(n):
+        all_ids.update(train_folds[k])
+        if use_validation:
+            all_ids.update(val_folds[k])
+        all_ids.update(test_folds[k])
+    return all_ids
+
+
+def get_unified_pool_indices(
+    data_root: Path,
+    train_file: str,
+    val_file: str,
+    test_file: str,
+    dataset_pdb_order: List[str],
+    dataset: "MProV3Dataset",
+    *,
+    use_validation: bool = True,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Map unique split-file PDBs (see get_unified_pool_pdb_ids) to dataset indices.
+    Only PDBs present in dataset_pdb_order are kept (intersection with built graphs).
+    Returns (indices, y) with one row per unique PDB, deterministic order (sorted PDB id).
+    """
+    pdb_ids = sorted(get_unified_pool_pdb_ids(
+        data_root,
+        train_file,
+        val_file,
+        test_file,
+        use_validation=use_validation,
+    ))
+    pdb_to_idx = {p: i for i, p in enumerate(dataset_pdb_order)}
+    indices_list: List[int] = []
+    y_list: List[int] = []
+    for pdb in pdb_ids:
+        if pdb not in pdb_to_idx:
+            continue
+        idx = pdb_to_idx[pdb]
+        y_list.append(int(dataset[idx].category.item()))
+        indices_list.append(idx)
+    return (
+        np.asarray(indices_list, dtype=np.int64),
+        np.asarray(y_list, dtype=np.int64),
+    )
 
 
 def _pyg_dataset_not_found_message(data_root: Path, dataset_name: str) -> str:

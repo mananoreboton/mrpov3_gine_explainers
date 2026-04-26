@@ -77,3 +77,27 @@ def create_data_loaders(
         collate_fn=collate_batch,
     )
     return train_loader, val_loader, test_loader
+
+def create_subset_loaders(
+    dataset: MProV3Dataset,
+    train_indices: List[int],
+    eval_indices: List[int],
+    batch_size: int = 32,
+) -> Tuple[DataLoader, DataLoader]:
+    """Train and eval DataLoaders over index subsets (same collate/shuffle as create_data_loaders)."""
+    train_dataset = Subset(dataset, train_indices)
+    eval_dataset = Subset(dataset, eval_indices)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        collate_fn=collate_batch,
+    )
+    eval_loader = DataLoader(
+        eval_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        collate_fn=collate_batch,
+    )
+    return train_loader, eval_loader
+

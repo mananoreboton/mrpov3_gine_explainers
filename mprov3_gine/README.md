@@ -214,7 +214,7 @@ All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at
 | Path                                         | Written by                                                                                 | Log file                                       |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------- |
 | `results/datasets/`                          | `build_dataset.py` (`data.pt`, `pdb_order.txt`)                                            | `build.log`                                    |
-| `results/trainings/`                         | `train.py` (`fold_<k>/best_gnn.pt`, `fold_<k>/training_metrics.json`, `training_summary.json`) | `train.log`                                    |
+| `results/trainings/`                         | `train.py` / `train_stratified_cv.py` (`fold_<k>/best_gnn.pt`, `fold_<k>/training_metrics.json`, `training_summary.json`; stratified run also `stratified_cv_metrics.json`) | `train.log` / `train_stratified_cv.log` |
 | `results/classifications/`                   | `classify.py` (`fold_<k>/classification_results.json`, `classification_summary.json`), `create_classification_report.py` (`index.html`, `graphs/`, per-PDB HTML) | `classify.log`, `create_classification_report.log` |
 | `results/visualizations/`                    | `visualize_graphs.py` (fold → train/val/test plan; one draw per graph; `index.html` with a tab per fold) | `visualize.log`                                |
 | `results/check_format/datasets/`             | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
@@ -365,6 +365,31 @@ uv run python train.py \
   --seed 42
 ```
 
+### 5b. Stratified CV on unified split pool (`train_stratified_cv.py`)
+
+**What it does:** Forms one sample pool from **unique** PDB IDs that appear in **any** train, validation, or test list across **all** folds in the three split files (the same files as `train.py`), restricted to structures present in `results/datasets/` (`pdb_order.txt`). Runs **stratified** K-fold CV (`sklearn.model_selection.StratifiedKFold`, default K=5): each fold trains on the complement and checkpoints on **best train accuracy** (like `train.py --no_validation`), then evaluates on the held-out fold. **Out-of-fold** predictions are concatenated and summarized with **precision, recall, F1** (per-class, macro, weighted) and a **confusion matrix** via scikit-learn. Writes `stratified_cv_metrics.json`, `fold_<k>/best_gnn.pt`, `fold_<k>/training_metrics.json`, `training_summary.json`, and `train_stratified_cv.log` under `results/trainings/`. **Note:** This overwrites `results/trainings/` like `train.py`; it does not use `--num_folds` / `--fold_indices` from the file-based CV.
+
+**CLI parameters**
+
+| Flag | Meaning | Default |
+|------|---------|---------|
+| `--data_root`, `--results_root` | Same as `train.py` | defaults from `mprov3_gine_explainer_defaults` |
+| `--train_split_file`, `--val_split_file`, `--test_split_file` | Same as `train.py` | `DEFAULT_*_SPLIT_FILE` |
+| `--cv_folds` | Stratified K-fold count | `5` |
+| `--epochs`, `--batch_size`, `--lr`, `--hidden`, `--num_layers`, `--dropout` | Same role as `train.py` | same defaults |
+| `--seed` | Torch + CV shuffle | random (logged) |
+| `--no_validation` | Build pool from train + test files only (omit val lists) | off |
+
+**Examples**
+
+```bash
+uv run python train_stratified_cv.py
+uv run python train_stratified_cv.py --cv_folds 5 --seed 42 --epochs 100
+```
+
+**Requirement:** Each class must appear at least `--cv_folds` times in the unified pool (StratifiedKFold constraint); otherwise the script exits with class counts.
+
+
 ### 6. Classify train or test split (`classify.py`)
 
 **What it does:** Loads `results/trainings/fold_<k>/<DEFAULT_TRAINING_CHECKPOINT_FILENAME>` (or legacy flat layout for fold 0), rebuilds data loaders for the same fold using the default raw snapshot (`DEFAULT_DATA_ROOT`), default results root (`DEFAULT_RESULTS_ROOT`), and default split filenames under `Splits/` (same as `SplitConfig` defaults used in training). By default it evaluates the **test** split; pass `--eval_split train` to evaluate the training split instead (with `shuffle=False`). Writes `fold_<k>/classification_results.json` including `eval_split`, `accuracy`, and per-PDB labels in the original category scale (-1, 0, 1). Older runs may have `fold_<k>/evaluation_results.json`; the summary and report tools still discover that legacy name. Refreshes `classification_summary.json` from every fold’s JSON: each fold entry keeps the key `test_accuracy` for the numeric score (accuracy on whichever split was chosen at classify time), plus `eval_split`; when all folds agree, the summary also includes top-level `eval_split`. Best fold uses that score (tie-break: lower fold index).
@@ -510,17 +535,19 @@ print_test_classification_report(test_metrics)
 | File                            | Role                                                                                                                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **model.py**                    | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`).                                                                                        |
-| **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
+| **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits`; `get_unified_pool_pdb_ids`, `get_unified_pool_indices` (deduplicated pool across split-file folds); `get_train_val_test_indices`; `MProV3Dataset`. |
 | **utils.py**                    | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger`, `FOLD_SUBDIR_NAME_RE` (matches `fold_<k>/` directory names).           |
 | **cli_common.py**               | Shared argparse helpers used by `train.py` and `classify.py` (paths and split files for training; fold indices only for classify; batch size; GINE hyperparameters).                                                |
 | **build_dataset.py**            | Builds PyG dataset to `results/datasets/`; writes `build.log`.                                                                                                                      |
 | **check_raw_data_format.py**    | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/check_input.log`.                                                                               |
 | **check_PyG_data_format.py**    | CLI: validate built dataset at `results/datasets/data.pt` by default; writes `results/check_format/datasets/check_output.log`.                                                      |
-| **loaders.py**                  | `collate_batch`, `create_data_loaders(dataset_root, data_root, ...)` (dataset under `results/datasets/`, splits from raw root).                                                     |
+| **loaders.py**                  | `collate_batch`, `create_data_loaders`, `create_subset_loaders` (train/eval index subsets).                                                     |
 | **train_epoch.py**              | One-epoch training step: `train_one_epoch`.                                                                                                                                         |
 | **validation.py**               | Validation: `evaluate_validation`, `ValidationMetrics`.                                                                                                                             |
 | **classification.py**           | Test-set classification: `classify_test`, `classify_test_with_predictions`, `TestMetrics`, `print_test_classification_report`.                                                      |
-| **train.py**                    | CLI: load `results/datasets/data.pt`, train; save checkpoints and `fold_<k>/training_metrics.json`, `training_summary.json`, and `train.log` under `results/trainings/`. |
+| **train.py**                    | CLI: file-based CV training; checkpoints and `training_summary.json` under `results/trainings/`. |
+| **stratified_cv_train.py**     | Stratified K-fold on unified deduplicated split pool; sklearn metrics JSON.                                                                                                                                         |
+| **train_stratified_cv.py**      | Thin CLI entry for `stratified_cv_train.main()`.                                                                                                                                                                    |
 | **classify.py**                 | CLI: load default checkpoint under `results/trainings/fold_<k>/`, classify train or test split (`--eval_split`); save `fold_<k>/classification_results.json`, `classification_summary.json`, and `classify.log` under `results/classifications/`. |
 | **create_classification_report.py** | CLI: read per-fold classification JSON (including legacy `evaluation_results.json`), optional `--folds`; merge training metrics from `trainings/`; write `index.html` (summary table + tabs), `graphs/`, per-PDB HTML; `create_classification_report.log`. |
 | **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`.   |
