@@ -1,5 +1,8 @@
 """
-Data loaders: collate function and factory for train/val/test DataLoaders.
+PyG DataLoaders for train, validation, and test splits.
+
+Expects a built dataset under results/datasets/ and split PDB lists from the raw snapshot.
+See README.md and ``create_data_loaders`` docstring for parameters.
 """
 
 from pathlib import Path
@@ -10,7 +13,7 @@ from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
 from dataset import MProV3Dataset, get_train_val_test_indices, load_dataset_pdb_order
-from config import SplitConfig
+from mprov3_gine_explainer_defaults import SplitConfig
 
 
 def collate_batch(
@@ -33,7 +36,8 @@ def create_data_loaders(
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Build train, validation, and test DataLoaders. Loads the PyG dataset from
-    dataset_root/split_config.dataset_name (must exist; run build_dataset.py first).
+    dataset_root/split_config.dataset_name (typically dataset_root=.../results/datasets
+    and dataset_name=\".\" / BUILT_DATASET_FOLDER_NAME; run build_dataset.py first).
     Splits are read from data_root/Splits/ (raw MPro snapshot).
     """
     dataset = MProV3Dataset(
@@ -49,6 +53,7 @@ def create_data_loaders(
         split_config.num_folds,
         split_config.fold_index,
         dataset_pdb_order=dataset_pdb_order,
+        use_validation=split_config.use_validation,
     )
     train_dataset = Subset(dataset, train_idx.tolist())
     val_dataset = Subset(dataset, val_idx.tolist())

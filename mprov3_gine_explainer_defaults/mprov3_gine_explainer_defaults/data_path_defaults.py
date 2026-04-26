@@ -33,10 +33,17 @@ RESULTS_CHECK_FORMAT = "check_format"
 CHECK_FORMAT_DATASETS_SUBDIR = "datasets"
 CHECK_FORMAT_RAW_DATA_SUBDIR = "raw_data"
 
-# --- Built PyG artifacts (under results/datasets/<timestamp>/ or similar) ---
+# --- Built PyG artifacts (under results/datasets/; data.pt at that level) ---
+# MProV3Dataset(root=.../results/datasets, dataset_name=BUILT_DATASET_FOLDER_NAME) loads data.pt there.
+BUILT_DATASET_FOLDER_NAME = "."
 PYG_DATA_FILENAME = "data.pt"
 PYG_PDB_ORDER_FILENAME = "pdb_order.txt"
 DEFAULT_TRAINING_CHECKPOINT_FILENAME = "best_gnn.pt"
+
+# --- Per-fold test-set classification output (under results/classifications/fold_<k>/) ---
+CLASSIFICATION_RESULTS_JSON = "classification_results.json"
+# Legacy filename from older runs; still discovered for reports and summaries.
+LEGACY_EVALUATION_RESULTS_JSON = "evaluation_results.json"
 
 # --- Default dataset folder name when using MProV3Dataset(root, dataset_name, ...) ---
 DEFAULT_PYG_DATASET_NAME = "processed_pyg"

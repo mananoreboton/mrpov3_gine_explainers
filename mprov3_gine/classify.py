@@ -1,0 +1,235 @@
+"""
+Run classification on the train or test split with a saved training checkpoint (independent of train.py).
+
+Uses default data/results roots, checkpoint name, and split filenames from mprov3_gine_explainer_defaults.
+Writes results/classifications/fold_<k>/classification_results.json and classification_summary.json.
+See README.md (Usage) and ``classify.py --help`` for flags (architecture must match training).
+"""
+
+import argparse
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import torch
+from torch_geometric.loader import DataLoader
+from mprov3_gine_explainer_defaults import (
+    BUILT_DATASET_FOLDER_NAME,
+    CLASSIFICATION_RESULTS_JSON,
+    DEFAULT_DATA_ROOT,
+    DEFAULT_EDGE_DIM,
+    DEFAULT_IN_CHANNELS,
+    DEFAULT_POOL,
+    DEFAULT_RESULTS_ROOT,
+    DEFAULT_TRAINING_CHECKPOINT_FILENAME,
+    LEGACY_EVALUATION_RESULTS_JSON,
+    resolve_checkpoint_path,
+    resolve_dataset_dir,
+    resolve_fold_indices,
+    RESULTS_CLASSIFICATIONS,
+    RESULTS_DATASETS,
+    SplitConfig,
+)
+
+from cli_common import (
+    add_batch_size_arg,
+    add_model_loader_args,
+    add_num_folds_and_fold_indices,
+)
+from classification import classify_test_with_predictions, print_test_classification_report
+from loaders import collate_batch, create_data_loaders
+from model import MProGNN
+from utils import FOLD_SUBDIR_NAME_RE, RunLogger, log_overwrite_if_exists
+
+_CLASSIFICATION_SUMMARY_JSON = "classification_summary.json"
+
+
+def _fold_classification_json_paths(classifications_root: Path) -> list[Path]:
+    """Per-fold JSON paths; prefer classification_results.json over legacy evaluation_results.json."""
+    by_fold: dict[int, Path] = {}
+    for p in classifications_root.glob(f"fold_*/{CLASSIFICATION_RESULTS_JSON}"):
+        m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
+        if m:
+            by_fold[int(m.group(1))] = p
+    for p in classifications_root.glob(f"fold_*/{LEGACY_EVALUATION_RESULTS_JSON}"):
+        m = FOLD_SUBDIR_NAME_RE.match(p.parent.name)
+        if m:
+            k = int(m.group(1))
+            if k not in by_fold:
+                by_fold[k] = p
+    return [by_fold[k] for k in sorted(by_fold)]
+
+
+def scan_and_write_classification_summary(classifications_root: Path, log) -> None:
+    """Scan per-fold classification JSON and write classification_summary.json."""
+    summary_path = classifications_root / _CLASSIFICATION_SUMMARY_JSON
+    fold_entries: list[dict] = []
+    for json_path in _fold_classification_json_paths(classifications_root):
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+        eval_split = str(data.get("eval_split", "test"))
+        fold_entries.append(
+            {
+                "fold_index": int(data["fold_index"]),
+                "test_accuracy": float(data["accuracy"]),
+                "eval_split": eval_split,
+            }
+        )
+    fold_entries.sort(key=lambda x: x["fold_index"])
+    log_overwrite_if_exists(summary_path, log)
+    if not fold_entries:
+        summary_path.write_text(json.dumps({"folds": []}, indent=2), encoding="utf-8")
+        log(
+            f"Classification summary: no fold_*/{CLASSIFICATION_RESULTS_JSON} or "
+            f"fold_*/{LEGACY_EVALUATION_RESULTS_JSON} under "
+            f"{classifications_root}; wrote empty {summary_path.name}"
+        )
+        return
+    best_fold = max(
+        fold_entries,
+        key=lambda f: (f["test_accuracy"], -f["fold_index"]),
+    )["fold_index"]
+    splits = {f["eval_split"] for f in fold_entries}
+    out: dict = {
+        "folds": fold_entries,
+        "best_classification_fold_index": best_fold,
+    }
+    if len(splits) == 1:
+        out["eval_split"] = next(iter(splits))
+    summary_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
+    log(
+        f"Classification summary: best_classification_fold_index={best_fold} → {summary_path}"
+    )
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Classify the train or test split with a trained GNN checkpoint "
+            "(independent of train.py). Paths and split filenames use package defaults."
+        )
+    )
+    add_num_folds_and_fold_indices(
+        parser,
+        fold_indices_help=(
+            "Run classification for these fold indices only (e.g. one fold: --fold_indices 2). "
+            "Default: all folds."
+        ),
+    )
+    parser.add_argument(
+        "--eval_split",
+        type=str,
+        choices=("train", "test"),
+        default="test",
+        help="Which split to evaluate (default: test).",
+    )
+    add_batch_size_arg(parser, for_classification=True)
+    add_model_loader_args(parser, for_classification=True)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    data_root = Path(DEFAULT_DATA_ROOT)
+    results_root = Path(DEFAULT_RESULTS_ROOT)
+    if not data_root.exists():
+        raise FileNotFoundError(f"Data root not found: {data_root}")
+
+    fold_list = resolve_fold_indices(args.num_folds, fold_indices=args.fold_indices)
+
+    dataset_dir = resolve_dataset_dir(results_root)
+    dataset_base = results_root / RESULTS_DATASETS
+    dataset_name = BUILT_DATASET_FOLDER_NAME
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    for k in fold_list:
+        checkpoint_path = resolve_checkpoint_path(
+            results_root, DEFAULT_TRAINING_CHECKPOINT_FILENAME, fold_index=k
+        )
+        split_config = SplitConfig(
+            num_folds=args.num_folds,
+            fold_index=k,
+            dataset_name=dataset_name,
+        )
+        fold_dir = f"fold_{k}"
+        out_dir = results_root / RESULTS_CLASSIFICATIONS / fold_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        log_path = out_dir / "classify.log"
+        results_path = out_dir / CLASSIFICATION_RESULTS_JSON
+
+        with RunLogger(log_path) as log:
+            log.log(
+                f"CV fold: {k + 1}/{split_config.num_folds} "
+                f"(fold_index={k}, num_folds={split_config.num_folds})"
+            )
+            log.log(f"Output: {out_dir}")
+            log.log(f"Checkpoint: {checkpoint_path}")
+            log.log(f"Dataset: {dataset_dir}")
+            log.log(f"Eval split: {args.eval_split}")
+
+            train_loader, _, test_loader = create_data_loaders(
+                dataset_base, data_root, split_config, batch_size=args.batch_size
+            )
+            if args.eval_split == "train":
+                eval_loader = DataLoader(
+                    train_loader.dataset,
+                    batch_size=args.batch_size,
+                    shuffle=False,
+                    collate_fn=collate_batch,
+                )
+            else:
+                eval_loader = test_loader
+            log.log(f"{args.eval_split} set size: {len(eval_loader.dataset)}")
+
+            model = MProGNN(
+                in_channels=DEFAULT_IN_CHANNELS,
+                hidden_channels=args.hidden,
+                num_layers=args.num_layers,
+                dropout=args.dropout,
+                out_classes=args.num_classes,
+                pool=DEFAULT_POOL,
+                edge_dim=DEFAULT_EDGE_DIM,
+            ).to(device)
+            model.load_state_dict(
+                torch.load(checkpoint_path, map_location=device, weights_only=False)
+            )
+
+            log.log(
+                f"Running classification on {args.eval_split} split (fold_index={k})"
+            )
+            eval_metrics, results = classify_test_with_predictions(
+                model, eval_loader, device
+            )
+
+            payload = {
+                "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "data_root": str(data_root.resolve()),
+                "results_root": str(results_root.resolve()),
+                "dataset_name": dataset_name,
+                "eval_split": args.eval_split,
+                "fold_index": k,
+                "num_folds": split_config.num_folds,
+                "accuracy": eval_metrics.accuracy,
+                "results": [
+                    {"pdb_id": pdb_id, "real_category": real, "predicted_category": pred}
+                    for pdb_id, real, pred in results
+                ],
+            }
+            log_overwrite_if_exists(results_path, log.log)
+            log.log(
+                f"Accuracy ({args.eval_split}, Category): {eval_metrics.accuracy:.4f} "
+                f"(fold_index={k})"
+            )
+            print_test_classification_report(eval_metrics)
+            results_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            log.log(f"Results saved to {results_path}")
+            log.log(f"Log written to {log_path}")
+
+    scan_and_write_classification_summary(
+        results_root / RESULTS_CLASSIFICATIONS,
+        print,
+    )
+
+
+if __name__ == "__main__":
+    main()

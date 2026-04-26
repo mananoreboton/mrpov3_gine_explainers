@@ -178,7 +178,7 @@ graphs/mask_.png
 
 1. **SDF path and `data_root`.** The explainer uses `data_root` (MPro snapshot). SDFs are at **`data_root/Ligand/Ligand_SDF/<pdb_id>_ligand.sdf`** (see `mprov3_gine/build_dataset.py`, `check_raw_data_format.py`).
 
-The script receives `data_root` (or default from `mprov3_gine/config.py`, e.g. `DEFAULT_DATA_ROOT`). Pass it into the visualization step so we can resolve `sdf_path` from `pdb_id`.
+The script receives `data_root` (or default `DEFAULT_DATA_ROOT` from `mprov3_gine_explainer_defaults`, i.e. workspace sibling `mprov3_data`). Pass it into the visualization step so we can resolve `sdf_path` from `pdb_id`.
 2. **Bond importance from `edge_mask`.** PyG stores each bond as two directed edges in `edge_index`; edge_mask has one value per column (see mprov3_gine/dataset.py: for each bond (u,v) both (u,v) and (v,u) are appended).
 Build a per-bond importance map: for each column k, get (u, v) = edge_index[0,k], edge_index[1,k], key (min(u,v), max(u,v)), value = max of current value and edge_mask[k]. Result: one importance per undirected bond, keyed by (u, v) with u < v.
 RDKit bond index: for a mol loaded from SDF, atom order = SDF order = graph node order. So bond between graph nodes u and v = mol.GetBondBetweenAtoms(int(u), int(v)) and its index is bond.GetIdx().
@@ -194,7 +194,7 @@ Implement this in mprov3_explainer (e.g. a new module visualize.py or inside an 
 **`generate_visualizations` (`mprov3_explainer/scripts/generate_visualizations.py`).** Reads `explanation_report.json` and the saved mask JSON files under `masks/`, resolves SDF paths, draws PNGs, and writes `index.html`.
 
 5. **Index page content and layout.** Data source: same as `explanation_report.json`: `mean_fidelity_plus`, `mean_fidelity_minus`, `num_graphs`, `per_graph` (`graph_id`, `fidelity_plus`, `fidelity_minus`, `auroc`, etc.).
-**Structure:** Title (e.g. “Explanation report”). Summary: run timestamp, mean fid+, mean fid−, num graphs. Grid/list of cards per graph: `pdb_id`, metrics, thumbnail linking to `graphs/mask_<pdb_id>.png`. Reuse styling patterns from `mprov3_gine/create_evaluation_report.py` where useful; escape HTML.
+**Structure:** Title (e.g. “Explanation report”). Summary: run timestamp, mean fid+, mean fid−, num graphs. Grid/list of cards per graph: `pdb_id`, metrics, thumbnail linking to `graphs/mask_<pdb_id>.png`. Reuse styling patterns from `mprov3_gine/create_classification_report.py` where useful; escape HTML.
 
 6. **Implementation (current repo).** Visualization and HTML helpers live under `mprov3_explainer/src/mprov3_explainer/` (e.g. `visualize.py`). **`scripts/run_explanations.py`** writes `explanation_report.json` and **`masks/<pdb_id>.json`** per graph. **`scripts/generate_visualizations.py`** accepts `--timestamp` (default: latest), `--data_root`, `--results_root`, loads each mask file, draws PNGs, and writes **`results/visualizations/<timestamp>/<explainer>/`**. RDKit is listed in `mprov3_explainer` dependencies.
 
