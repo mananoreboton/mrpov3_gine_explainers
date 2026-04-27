@@ -7,8 +7,6 @@ See README.md and ``create_data_loaders`` docstring for parameters.
 
 from pathlib import Path
 from typing import List, Tuple
-
-import torch
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
@@ -16,16 +14,16 @@ from dataset import MProV3Dataset, get_train_val_test_indices, load_dataset_pdb_
 from mprov3_gine_explainer_defaults import SplitConfig
 
 
-def collate_batch(
-    batch: List,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Collate so that pIC50 and category are stacked and batch vector is set."""
+def collate_batch(batch: List):
+    """Collate a list of PyG Data objects into a single PyG Batch.
+
+    The returned Batch keeps graph-level attributes (for example ``category``
+    and ``pIC50``) as concatenated tensors, so training/evaluation loops can
+    consume it directly via ``batch.to(device)``.
+    """
     from torch_geometric.data import Batch
 
-    data_batch = Batch.from_data_list([b for b in batch])
-    pIC50 = torch.cat([b.pIC50 for b in batch], dim=0)
-    category = torch.cat([b.category for b in batch], dim=0)
-    return data_batch, pIC50, category
+    return Batch.from_data_list([b for b in batch])
 
 
 def create_data_loaders(
