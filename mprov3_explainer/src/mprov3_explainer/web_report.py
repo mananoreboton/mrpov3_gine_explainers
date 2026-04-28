@@ -167,6 +167,12 @@ def write_fold_explanation_web_report(
         ("mean_paper_sufficiency", "Mean Fsuf (raw)", "num"),
         ("mean_paper_comprehensiveness", "Mean Fcom (raw)", "num"),
         ("mean_paper_f1_fidelity", "Mean Ff1 (clamped)", "num"),
+        ("mean_fidelity_plus_all_graphs", "All Fid+", "num"),
+        ("mean_fidelity_minus_all_graphs", "All Fid−", "num"),
+        ("mean_pyg_characterization_all_graphs", "All PyG char", "num"),
+        ("mean_paper_sufficiency_all_graphs", "All Fsuf (raw)", "num"),
+        ("mean_paper_comprehensiveness_all_graphs", "All Fcom (raw)", "num"),
+        ("mean_paper_f1_fidelity_all_graphs", "All Ff1 (clamped)", "num"),
         ("num_graphs", "Graphs", "num"),
         ("num_valid", "Valid", "num"),
         ("wall_time_s", "Wall (s)", "num"),
@@ -458,6 +464,11 @@ _GLOBAL_METRIC_KEYS = [
     ("mean_paper_sufficiency", "Mean Fsuf (raw)"),
     ("mean_paper_comprehensiveness", "Mean Fcom (raw)"),
     ("mean_paper_f1_fidelity", "Mean Ff1 (clamped)"),
+    ("mean_fid_plus_all_graphs", "All Fid+"),
+    ("mean_fid_minus_all_graphs", "All Fid\u2212"),
+    ("mean_paper_sufficiency_all_graphs", "All Fsuf (raw)"),
+    ("mean_paper_comprehensiveness_all_graphs", "All Fcom (raw)"),
+    ("mean_paper_f1_fidelity_all_graphs", "All Ff1 (clamped)"),
     ("num_valid", "Valid"),
     ("wall_time_s", "Wall (s)"),
 ]
@@ -624,7 +635,7 @@ def write_global_explanation_index(
 
   <section id="fold-summary">
     <h2>Summary by fold</h2>
-    <p class="muted">Metrics averaged across all explainers in each fold. Click a fold to open its detailed report.</p>
+    <p class="muted">Metrics averaged across all explainers in each fold. Headline means are valid-only; columns prefixed with All are diagnostics over every explained graph. Click a fold to open its detailed report.</p>
     <table class="summary" id="fold-table">
       <thead><tr>{fold_thead}</tr></thead>
       <tbody>{fold_tbody}</tbody>
@@ -633,7 +644,7 @@ def write_global_explanation_index(
 
   <section id="per-explainer">
     <h2>Per-explainer across folds</h2>
-    <p class="muted">Each table shows one explainer&rsquo;s metrics across all folds.</p>
+    <p class="muted">Each table shows one explainer&rsquo;s metrics across all folds. Compare valid-only headline means with All diagnostics before drawing final conclusions.</p>
     {"".join(explainer_sections)}
   </section>
 
