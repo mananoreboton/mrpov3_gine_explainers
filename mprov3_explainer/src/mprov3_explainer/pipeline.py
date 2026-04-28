@@ -665,6 +665,11 @@ def _compute_pyg_fidelity(
 ) -> tuple[float, float]:
     """PyG GraphFramEx fidelity+ / fidelity− on a (soft-mask) explanation.
 
+    PyG's :func:`fidelity` returns class-decision fidelity rates. In model mode
+    it checks whether the masked/complemented graph preserves the full-graph
+    predicted class; in phenomenon mode it checks target-class correctness.
+    These values are not probability-drop ratios.
+
     Returns ``(NaN, NaN)`` on exception so the aggregator can drop the graph
     cleanly instead of silently averaging in zeros.
     """
@@ -722,7 +727,7 @@ def _compute_pyg_fidelity_top_k(
 
     This is the GraphFramEx-canonical formulation (Amara et al., 2022): mask is
     binarized at the top-``k`` fraction of entries before being fed to PyG's
-    :func:`fidelity`. ``k = 0.2`` is the paper's default.
+    class-decision :func:`fidelity`. ``k = 0.2`` is the paper's default.
     """
     try:
         binarized = _binarize_explanation_top_k(explanation, k=k)

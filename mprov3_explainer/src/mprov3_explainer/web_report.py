@@ -366,7 +366,7 @@ def write_fold_explanation_web_report(
 
   <section id="summary">
     <h2>Metrics by explainer</h2>
-    <p class="muted">Click column headers to sort. Paths are relative to this HTML file.</p>
+    <p class="muted">Click column headers to sort. Mean Fid+ and Mean Fid&minus; are PyG class-decision GraphFramEx rates, not probability-drop ratios. Paths are relative to this HTML file.</p>
     <table class="summary" id="summary-table">
       <thead><tr>{thead}</tr></thead>
       <tbody>{tbody}</tbody>
