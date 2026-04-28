@@ -18,6 +18,7 @@ from mprov3_explainer.pipeline import (
     _paper_sufficiency_and_comprehensiveness,
     _percentile_keep_fractions,
     aggregate_fidelity,
+    diagnose_explanation_run,
     nanmean,
 )
 
@@ -219,6 +220,25 @@ def test_aggregate_fidelity_returns_nan_for_empty_input():
     plus, minus = aggregate_fidelity([], valid_only=False)
     assert math.isnan(plus)
     assert math.isnan(minus)
+
+
+def test_diagnose_explanation_run_marks_all_degenerate_failure():
+    from mprov3_explainer.pipeline import ExplanationResult
+
+    results = [
+        ExplanationResult(
+            graph_id=f"g{i}",
+            explanation=Explanation(),
+            valid=False,
+            mask_spread=0.0,
+        )
+        for i in range(3)
+    ]
+
+    status, note = diagnose_explanation_run(results, mask_spread_tolerance=1e-3)
+
+    assert status == "failed_all_degenerate_masks"
+    assert "headline metrics" in note
 
 
 # ---------------------------------------------------------------------------

@@ -1067,3 +1067,47 @@ def aggregate_fidelity(
         return nanmean(plus), nanmean(minus)
     n = len(results)
     return sum(plus) / n, sum(minus) / n
+
+
+def diagnose_explanation_run(
+    results: list[ExplanationResult],
+    *,
+    mask_spread_tolerance: float = 1e-3,
+) -> tuple[str, str]:
+    """Return a compact status and note for an explainer run.
+
+    Headline metrics are intentionally valid-only, so a method with zero valid
+    explanations can otherwise look like a normal row whose means happen to be
+    missing. This helper makes failed or partially degenerate runs explicit in
+    the machine-readable JSON and the HTML report.
+    """
+    if not results:
+        return "empty_run", "No graphs were explained; headline metrics are unavailable."
+
+    n_graphs = len(results)
+    n_valid = sum(1 for r in results if r.valid)
+    n_degenerate = sum(
+        1 for r in results if r.mask_spread < mask_spread_tolerance
+    )
+
+    if n_valid == 0 and n_degenerate == n_graphs:
+        return (
+            "failed_all_degenerate_masks",
+            "No headline metrics are valid because every produced mask is degenerate.",
+        )
+    if n_valid == 0 and n_degenerate > 0:
+        return (
+            "failed_degenerate_or_invalid_masks",
+            "No headline metrics are valid; at least one mask is degenerate and the remaining graphs are invalid.",
+        )
+    if n_valid == 0:
+        return (
+            "failed_no_valid_metrics",
+            "No headline metrics are valid after correctness and metric-failure filtering.",
+        )
+    if n_degenerate > 0:
+        return (
+            "partial_degenerate_masks",
+            f"{n_degenerate} of {n_graphs} masks are degenerate and excluded from valid-only headline metrics.",
+        )
+    return "ok", "Run produced at least one valid non-degenerate explanation."

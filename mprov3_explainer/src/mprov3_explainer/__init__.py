@@ -21,6 +21,7 @@ from mprov3_explainer.paths import (
 from mprov3_explainer.pipeline import (
     ExplanationResult,
     aggregate_fidelity,
+    diagnose_explanation_run,
     run_explanations,
     train_explainer,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "visualizations_run_dir",
     "ExplanationResult",
     "aggregate_fidelity",
+    "diagnose_explanation_run",
     "run_explanations",
     "train_explainer",
     "PreprocessedExplanation",

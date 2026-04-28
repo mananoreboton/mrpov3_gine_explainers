@@ -66,6 +66,14 @@ def write_fold_explanation_web_report(
             blurb = html.escape(get_spec(explainer_name).report_paragraph)
         except ValueError:
             blurb = ""
+        status = report.get("run_status", "ok")
+        status_note = report.get("run_status_note", "")
+        if status != "ok":
+            blurb = (
+                f"{blurb} "
+                f"Run status: {html.escape(str(status))}. "
+                f"{html.escape(str(status_note))}"
+            ).strip()
 
         masks_dir = explanations_base / explainer_name / "masks"
         graphs_dir = visualizations_run_dir(fold_root, explainer_name) / "graphs"
@@ -149,6 +157,7 @@ def write_fold_explanation_web_report(
     # JSON does not carry the key (i.e. for older reports).
     sum_cols = [
         ("explainer", "Explainer", "text"),
+        ("run_status", "Status", "text"),
         ("mean_fidelity_plus", "Mean Fid+", "num"),
         ("mean_fidelity_minus", "Mean Fid−", "num"),
         ("mean_pyg_characterization", "Mean PyG char", "num"),

@@ -73,6 +73,7 @@ from mprov3_explainer import (
     AVAILABLE_EXPLAINERS,
     ExplanationResult,
     aggregate_fidelity,
+    diagnose_explanation_run,
     explanations_run_dir,
     get_device,
     resolve_dataset_dir,
@@ -401,6 +402,10 @@ def run_one_explainer(
     num_misclassified = sum(1 for r in results if not r.correct_class)
     mean_mask_spread = nanmean([r.mask_spread for r in results])
     mean_mask_entropy = nanmean([r.mask_entropy for r in results])
+    run_status, run_status_note = diagnose_explanation_run(
+        results,
+        mask_spread_tolerance=MASK_SPREAD_TOLERANCE,
+    )
 
     print(f"Mean fidelity (fid+, top-k={top_k_fraction}): {_fmt(mean_fid_plus)}  "
           f"[soft: {_fmt(mean_fid_plus_soft)}]")
@@ -416,6 +421,8 @@ def run_one_explainer(
         f"{num_degenerate_mask} degenerate, {num_misclassified} misclassified) "
         f"in {wall_time:.1f}s."
     )
+    if run_status != "ok":
+        print(f"[WARN] Run status: {run_status} - {run_status_note}", flush=True)
 
     out_path = explanations_run_dir(ctx.explainer_results_root, explainer_name)
     if out_path.exists() and any(out_path.iterdir()):
@@ -474,6 +481,8 @@ def run_one_explainer(
         "mean_mask_entropy": mean_mask_entropy,
         "top_k_fraction": float(top_k_fraction),
         "seed": int(seed),
+        "run_status": run_status,
+        "run_status_note": run_status_note,
         "explainer": explainer_name,
         "wall_time_s": wall_time,
         "per_graph": per_graph_entries,
@@ -533,6 +542,8 @@ def run_one_explainer(
         "mean_mask_entropy": mean_mask_entropy,
         "top_k_fraction": float(top_k_fraction),
         "seed": int(seed),
+        "run_status": run_status,
+        "run_status_note": run_status_note,
         "wall_time_s": wall_time,
     }
     return summary, per_graph_entries
