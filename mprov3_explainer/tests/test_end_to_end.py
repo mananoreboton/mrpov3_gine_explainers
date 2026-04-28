@@ -16,6 +16,7 @@ from torch_geometric.loader import DataLoader
 
 from mprov3_explainer.pipeline import (
     ExplanationResult,
+    PredictionBaselineEntry,
     aggregate_fidelity,
     nanmean,
     run_explanations,
@@ -73,6 +74,9 @@ def _expected_fields() -> set[str]:
         "paper_f1_fidelity",
         "valid",
         "correct_class",
+        "pred_class",
+        "target_class",
+        "prediction_baseline_mismatch",
         "has_node_mask",
         "has_edge_mask",
         "mask_spread",
@@ -161,3 +165,38 @@ def test_run_explanations_aggregation_is_finite_on_smoke_dataset():
     chars = [r.pyg_characterization for r in results]
     out = nanmean(chars)
     assert isinstance(out, float)
+
+
+def test_run_explanations_uses_precomputed_prediction_baseline():
+    torch.manual_seed(0)
+    model = _TinyGraphModel(in_dim=4, num_classes=2)
+    loader = _make_loader()
+    baseline = {
+        "graph_0": PredictionBaselineEntry(
+            graph_id="graph_0",
+            pred_class=1,
+            target_class=0,
+            correct_class=False,
+        )
+    }
+
+    results = list(run_explanations(
+        model,
+        loader,
+        torch.device("cpu"),
+        explainer_name="GRADEXPINODE",
+        explainer_epochs=1,
+        max_graphs=1,
+        apply_preprocessing_flag=True,
+        correct_class_only=True,
+        apply_mask_spread_filter=False,
+        paper_metrics=False,
+        top_k_fraction=0.2,
+        prediction_baseline=baseline,
+    ))
+
+    assert len(results) == 1
+    assert results[0].pred_class == 1
+    assert results[0].target_class == 0
+    assert results[0].correct_class is False
+    assert results[0].valid is False

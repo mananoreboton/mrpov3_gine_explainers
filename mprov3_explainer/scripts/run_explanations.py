@@ -24,7 +24,7 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -72,7 +72,9 @@ from mprov3_gine_explainer_defaults import (
 from mprov3_explainer import (
     AVAILABLE_EXPLAINERS,
     ExplanationResult,
+    PredictionBaselineEntry,
     aggregate_fidelity,
+    collect_prediction_baseline,
     diagnose_explanation_run,
     explanations_run_dir,
     get_device,
@@ -319,6 +321,7 @@ def run_one_explainer(
     *,
     top_k_fraction: float = DEFAULT_TOP_K_FRACTION,
     seed: int = DEFAULT_SEED,
+    prediction_baseline: dict[str, PredictionBaselineEntry] | None = None,
 ) -> tuple[dict, list[dict]]:
     """Drive pipeline for one explainer: explain → metrics → per-graph JSON + report dict."""
     spec = get_spec(explainer_name)
@@ -353,6 +356,7 @@ def run_one_explainer(
         paper_metrics=True,
         paper_n_thresholds=PAPER_N_THRESHOLDS,
         top_k_fraction=top_k_fraction,
+        prediction_baseline=prediction_baseline,
         **explainer_kwargs,
     ):
         results.append(result)
@@ -400,6 +404,9 @@ def run_one_explainer(
     # Diagnostics (per-explainer)
     num_degenerate_mask = sum(1 for r in results if r.mask_spread < MASK_SPREAD_TOLERANCE)
     num_misclassified = sum(1 for r in results if not r.correct_class)
+    num_prediction_baseline_mismatch = sum(
+        1 for r in results if r.prediction_baseline_mismatch
+    )
     mean_mask_spread = nanmean([r.mask_spread for r in results])
     mean_mask_entropy = nanmean([r.mask_entropy for r in results])
     run_status, run_status_note = diagnose_explanation_run(
@@ -421,6 +428,12 @@ def run_one_explainer(
         f"{num_degenerate_mask} degenerate, {num_misclassified} misclassified) "
         f"in {wall_time:.1f}s."
     )
+    if num_prediction_baseline_mismatch:
+        print(
+            f"[WARN] {num_prediction_baseline_mismatch} graph(s) differed from "
+            "the precomputed model prediction baseline.",
+            flush=True,
+        )
     if run_status != "ok":
         print(f"[WARN] Run status: {run_status} - {run_status_note}", flush=True)
 
@@ -444,6 +457,9 @@ def run_one_explainer(
             "paper_f1_fidelity": r.paper_f1_fidelity,
             "valid": r.valid,
             "correct_class": r.correct_class,
+            "pred_class": r.pred_class,
+            "target_class": r.target_class,
+            "prediction_baseline_mismatch": r.prediction_baseline_mismatch,
             "has_node_mask": r.has_node_mask,
             "has_edge_mask": r.has_edge_mask,
             "mask_spread": r.mask_spread,
@@ -477,6 +493,7 @@ def run_one_explainer(
         "num_valid": n_valid,
         "num_degenerate_mask": num_degenerate_mask,
         "num_misclassified": num_misclassified,
+        "num_prediction_baseline_mismatch": num_prediction_baseline_mismatch,
         "mean_mask_spread": mean_mask_spread,
         "mean_mask_entropy": mean_mask_entropy,
         "top_k_fraction": float(top_k_fraction),
@@ -538,6 +555,7 @@ def run_one_explainer(
         "num_valid": n_valid,
         "num_degenerate_mask": num_degenerate_mask,
         "num_misclassified": num_misclassified,
+        "num_prediction_baseline_mismatch": num_prediction_baseline_mismatch,
         "mean_mask_spread": mean_mask_spread,
         "mean_mask_entropy": mean_mask_entropy,
         "top_k_fraction": float(top_k_fraction),
@@ -583,12 +601,43 @@ def write_comparison_report(
     return json_path
 
 
+def write_prediction_baseline(
+    *,
+    explainer_results_root: Path,
+    prediction_baseline: dict[str, PredictionBaselineEntry],
+) -> Path:
+    """Write the model/fold/split prediction baseline used by all explainers."""
+    explanations_path = explainer_results_root / RESULTS_EXPLANATIONS
+    explanations_path.mkdir(parents=True, exist_ok=True)
+    baseline_path = explanations_path / "model_prediction_baseline.json"
+    payload = {
+        "entries": [asdict(entry) for entry in prediction_baseline.values()],
+        "num_graphs": len(prediction_baseline),
+        "num_misclassified": sum(
+            1 for entry in prediction_baseline.values() if not entry.correct_class
+        ),
+    }
+    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return baseline_path
+
+
 def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
     """Run all explainers on a single fold context and write the comparison report."""
     explainer_names = list(AVAILABLE_EXPLAINERS)
 
     all_summaries: dict[str, dict] = {}
     all_per_graph: dict[str, list[dict]] = {}
+    prediction_baseline = collect_prediction_baseline(
+        ctx.model,
+        ctx.explain_loader,
+        ctx.device,
+        get_graph_id=_get_graph_id,
+    )
+    baseline_path = write_prediction_baseline(
+        explainer_results_root=ctx.explainer_results_root,
+        prediction_baseline=prediction_baseline,
+    )
+    print(f"Model prediction baseline: {baseline_path}", flush=True)
 
     for explainer_name in explainer_names:
         seed_everything(args.seed)
@@ -597,6 +646,7 @@ def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
             explainer_name,
             top_k_fraction=args.top_k_fraction,
             seed=args.seed,
+            prediction_baseline=prediction_baseline,
         )
         all_summaries[explainer_name] = summary
         all_per_graph[explainer_name] = per_graph

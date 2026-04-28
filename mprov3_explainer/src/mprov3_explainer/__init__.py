@@ -20,7 +20,9 @@ from mprov3_explainer.paths import (
 )
 from mprov3_explainer.pipeline import (
     ExplanationResult,
+    PredictionBaselineEntry,
     aggregate_fidelity,
+    collect_prediction_baseline,
     diagnose_explanation_run,
     run_explanations,
     train_explainer,
@@ -52,7 +54,9 @@ __all__ = [
     "resolve_training_checkpoint_and_dataset_name",
     "visualizations_run_dir",
     "ExplanationResult",
+    "PredictionBaselineEntry",
     "aggregate_fidelity",
+    "collect_prediction_baseline",
     "diagnose_explanation_run",
     "run_explanations",
     "train_explainer",

@@ -117,6 +117,9 @@ def write_fold_explanation_web_report(
                 ("mask_entropy", "Mask entropy"),
                 ("valid", "valid"),
                 ("correct_class", "correct class"),
+                ("pred_class", "pred class"),
+                ("target_class", "target class"),
+                ("prediction_baseline_mismatch", "baseline mismatch"),
                 ("has_node_mask", "node mask"),
                 ("has_edge_mask", "edge mask"),
                 ("elapsed_s", "time (s)"),
@@ -172,6 +175,7 @@ def write_fold_explanation_web_report(
         ("mean_pyg_characterization_soft", "Mean PyG char (soft)", "num"),
         ("num_degenerate_mask", "Degen.", "num"),
         ("num_misclassified", "Misclass.", "num"),
+        ("num_prediction_baseline_mismatch", "Pred. drift", "num"),
         ("mean_mask_spread", "Spread", "num"),
         ("mean_mask_entropy", "Entropy", "num"),
     ]

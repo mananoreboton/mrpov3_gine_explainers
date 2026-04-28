@@ -70,7 +70,8 @@ zeros / unclamped Ff1 / soft-mask fidelity headline of the previous version.
 | `num_graphs` | total graphs run through the explainer | integer ≥ 0 | — |
 | `num_valid` | graphs with `valid=True` (correct class, mask spread ≥ τ, no NaN metric) | integer ≤ `num_graphs` | — |
 | `num_degenerate_mask` | graphs whose representative mask has spread (max − min) below τ = 1e-3 | integer | New diagnostic. Tracks how often a mask is effectively constant (PGEXPL frequently degenerates without enough training). |
-| `num_misclassified` | graphs where the model's prediction differs from the ground-truth label | integer | — |
+| `num_misclassified` | graphs where the fold-level model prediction baseline differs from the ground-truth label | integer | Computed once before any explainer runs, so this count should be identical for all explainers in the same fold and split. |
+| `num_prediction_baseline_mismatch` | graphs where an explainer-time prediction differs from the precomputed baseline | integer | Should be 0. Nonzero values indicate model state drift or explainer side effects. |
 | `mean_mask_spread` | NaN-skipped mean of `max(mask) − min(mask)` across explained graphs | `[0, ∞)` | — |
 | `mean_mask_entropy` | NaN-skipped mean of Shannon entropy (in nats) of the normalized mask interpreted as a probability distribution | `[0, log(N)]` | Sharper masks → lower entropy. |
 | `top_k_fraction` | the *k* used by the headline top-k fidelity (CLI `--top_k_fraction`) | `(0, 1]` | Self-describing parameter; default `0.2`. |

@@ -14,7 +14,7 @@ import math
 import time
 import warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator, Mapping, Optional
 
 import torch
 from torch_geometric.explain import Explanation
@@ -87,11 +87,24 @@ class ExplanationResult:
     paper_f1_fidelity: float = _NAN
     valid: bool = True
     correct_class: bool = True
+    pred_class: int = -1
+    target_class: int = -1
+    prediction_baseline_mismatch: bool = False
     has_node_mask: bool = False
     has_edge_mask: bool = False
     mask_spread: float = 0.0
     mask_entropy: float = 0.0
     elapsed_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class PredictionBaselineEntry:
+    """Model prediction for one graph before any explainer is run."""
+
+    graph_id: str
+    pred_class: int
+    target_class: int
+    correct_class: bool
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +135,79 @@ def _get_target_class(data: Any) -> Optional[int]:
     if hasattr(c, "item"):
         return int(c.item())
     return int(c)
+
+
+def collect_prediction_baseline(
+    model: torch.nn.Module,
+    loader: Any,
+    device: torch.device,
+    *,
+    get_graph_id: Optional[Callable[..., str]] = None,
+    max_graphs: Optional[int] = None,
+) -> dict[str, PredictionBaselineEntry]:
+    """Compute graph predictions once, before running explainer-specific code.
+
+    Misclassification is a property of the trained model, fold, and split. It
+    should not change across explainers, so the runner can collect this
+    baseline once and pass it back into :func:`run_explanations`.
+    """
+    was_training = model.training
+    model.eval()
+    model.to(device)
+    baseline: dict[str, PredictionBaselineEntry] = {}
+    graph_index = 0
+    try:
+        for batch in loader:
+            if max_graphs is not None and graph_index >= max_graphs:
+                break
+            data_batch = batch[0] if isinstance(batch, (list, tuple)) else batch
+            if hasattr(data_batch, "to_data_list"):
+                graph_list = data_batch.to_data_list()
+            else:
+                graph_list = [data_batch]
+
+            for data in graph_list:
+                if max_graphs is not None and graph_index >= max_graphs:
+                    break
+                x, edge_index, batch_tensor, edge_attr = _single_graph_inputs(data, device)
+                graph_id = get_graph_id(data, graph_index) if get_graph_id else f"graph_{graph_index}"
+                with torch.no_grad():
+                    logits = model(x, edge_index, batch_tensor, edge_attr)
+                pred_class = int(logits.argmax(dim=-1).squeeze().item())
+                target_class = _get_target_class(data)
+                if target_class is None:
+                    target_class = pred_class
+                baseline[graph_id] = PredictionBaselineEntry(
+                    graph_id=graph_id,
+                    pred_class=pred_class,
+                    target_class=int(target_class),
+                    correct_class=pred_class == int(target_class),
+                )
+                graph_index += 1
+    finally:
+        if was_training:
+            model.train()
+        else:
+            model.eval()
+    return baseline
+
+
+def _coerce_prediction_baseline_entry(
+    entry: PredictionBaselineEntry | Mapping[str, Any],
+) -> PredictionBaselineEntry:
+    """Accept dataclass or dict baselines for test and integration flexibility."""
+    if isinstance(entry, PredictionBaselineEntry):
+        return entry
+    graph_id = str(entry.get("graph_id", ""))
+    pred_class = int(entry["pred_class"])
+    target_class = int(entry["target_class"])
+    correct_class = bool(entry.get("correct_class", pred_class == target_class))
+    return PredictionBaselineEntry(
+        graph_id=graph_id,
+        pred_class=pred_class,
+        target_class=target_class,
+        correct_class=correct_class,
+    )
 
 
 def _predict_target_proba(
@@ -853,6 +939,9 @@ def run_explanations(
     paper_metrics: bool = True,
     paper_n_thresholds: int = DEFAULT_PAPER_N_THRESHOLDS,
     top_k_fraction: float = DEFAULT_TOP_K_FRACTION,
+    prediction_baseline: Optional[
+        Mapping[str, PredictionBaselineEntry | Mapping[str, Any]]
+    ] = None,
     **explainer_kwargs: Any,
 ) -> Iterator[ExplanationResult]:
     """Generate graph-level explanations, preprocess, then compute fidelity.
@@ -908,12 +997,35 @@ def run_explanations(
             x, edge_index, batch_tensor, edge_attr = _single_graph_inputs(data, device)
             graph_id = get_graph_id(data, graph_index) if get_graph_id else f"graph_{graph_index}"
 
+            model.eval()
             with torch.no_grad():
                 logits = model(x, edge_index, batch_tensor, edge_attr)
-            pred_class = int(logits.argmax(dim=-1).squeeze().item())
+            observed_pred_class = int(logits.argmax(dim=-1).squeeze().item())
             target_class = _get_target_class(data)
             if target_class is None:
-                target_class = pred_class
+                target_class = observed_pred_class
+            pred_class = observed_pred_class
+            prediction_baseline_mismatch = False
+            if prediction_baseline is not None and graph_id in prediction_baseline:
+                baseline_entry = _coerce_prediction_baseline_entry(
+                    prediction_baseline[graph_id]
+                )
+                prediction_baseline_mismatch = (
+                    baseline_entry.pred_class != observed_pred_class
+                    or baseline_entry.target_class != int(target_class)
+                )
+                if prediction_baseline_mismatch:
+                    _LOG.warning(
+                        "Prediction baseline mismatch for %s / %s: baseline=(pred=%s,target=%s), observed=(pred=%s,target=%s)",
+                        explainer_name,
+                        graph_id,
+                        baseline_entry.pred_class,
+                        baseline_entry.target_class,
+                        observed_pred_class,
+                        int(target_class),
+                    )
+                pred_class = baseline_entry.pred_class
+                target_class = baseline_entry.target_class
 
             raw_explanation, elapsed = _forward_raw_explanation(
                 explainer,
@@ -1028,6 +1140,9 @@ def run_explanations(
                 paper_f1_fidelity=paper_f1,
                 valid=valid,
                 correct_class=correct_class,
+                pred_class=int(pred_class),
+                target_class=int(target_class),
+                prediction_baseline_mismatch=prediction_baseline_mismatch,
                 has_node_mask=has_node_mask,
                 has_edge_mask=has_edge_mask,
                 mask_spread=spread_val,
