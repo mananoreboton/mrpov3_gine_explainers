@@ -236,9 +236,9 @@ def write_explanation_index_html(out_path: Path, report_dict: Dict[str, Any]) ->
         f"<p><strong>Mean fidelity (fid+)</strong>: {mean_fid_plus:.4f} &nbsp; "
         f"<strong>Mean fidelity (fid&minus;)</strong>: {mean_fid_minus:.4f} &nbsp; "
         f"<strong>Char (PyG)</strong>: {mean_char:.4f} &nbsp; "
-        f"<strong>Fsuf</strong>: {mean_fsuf:.4f} &nbsp; "
-        f"<strong>Fcom</strong>: {mean_fcom:.4f} &nbsp; "
-        f"<strong>Ff1</strong>: {mean_ff1:.4f} &nbsp; "
+        f"<strong>Fsuf (raw)</strong>: {mean_fsuf:.4f} &nbsp; "
+        f"<strong>Fcom (raw)</strong>: {mean_fcom:.4f} &nbsp; "
+        f"<strong>Ff1 (clamped)</strong>: {mean_ff1:.4f} &nbsp; "
         f"<strong>Graphs</strong>: {num_graphs}</p>",
         "<div class='grid'>",
     ]
@@ -259,7 +259,7 @@ def write_explanation_index_html(out_path: Path, report_dict: Dict[str, Any]) ->
             f"    <span class='meta'>"
             f"fid+ {fid_plus:.2f} fid&minus; {fid_minus:.2f} "
             f"char {char:.2f} "
-            f"Fsuf {fsuf:.2f} Fcom {fcom:.2f} Ff1 {ff1:.2f}"
+            f"Fsuf(raw) {fsuf:.2f} Fcom(raw) {fcom:.2f} Ff1(clamped) {ff1:.2f}"
             f"</span>"
         )
         body.append("  </a>")
@@ -326,15 +326,15 @@ def write_comparison_index_html(
     for ex in explainers:
         v = per_explainer.get(ex, {}).get("mean_pyg_characterization", 0.0)
         rows.append(f"<td>{v:.4f}</td>")
-    rows.append("</tr><tr><td>Mean Fsuf</td>")
+    rows.append("</tr><tr><td>Mean Fsuf (raw)</td>")
     for ex in explainers:
         v = per_explainer.get(ex, {}).get("mean_paper_sufficiency", 0.0)
         rows.append(f"<td>{v:.4f}</td>")
-    rows.append("</tr><tr><td>Mean Fcom</td>")
+    rows.append("</tr><tr><td>Mean Fcom (raw)</td>")
     for ex in explainers:
         v = per_explainer.get(ex, {}).get("mean_paper_comprehensiveness", 0.0)
         rows.append(f"<td>{v:.4f}</td>")
-    rows.append("</tr><tr><td>Mean Ff1</td>")
+    rows.append("</tr><tr><td>Mean Ff1 (clamped)</td>")
     for ex in explainers:
         v = per_explainer.get(ex, {}).get("mean_paper_f1_fidelity", 0.0)
         rows.append(f"<td>{v:.4f}</td>")

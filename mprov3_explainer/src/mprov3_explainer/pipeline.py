@@ -282,8 +282,10 @@ def _paper_sufficiency_and_comprehensiveness(
 
     For each ``keep_fraction k ∈ {1/Nt, …, (Nt-1)/Nt}``, build the explanation
     subgraph from the top-``k`` fraction of nodes by mask value, and the
-    complement subgraph from the rest. Sufficiency / comprehensiveness are the
-    average drops in target-class probability across the sweep.
+    complement subgraph from the rest. Sufficiency / comprehensiveness are raw
+    signed target-class probability differences across the sweep:
+    ``P_target(full) - P_target(subgraph_or_complement)``. They can be
+    negative when a subgraph increases target probability.
 
     Compared to the previous raw ``mask > t`` thresholding, this is robust to
     masks that are not uniformly distributed in ``[0, 1]`` (e.g. a single very
@@ -513,8 +515,10 @@ def _paper_f1_fidelity(Fsuf: float, Fcom: float) -> float:
     ``[0, 1]`` (and even negative numbers) when one of the operands is negative
     or ``Fsuf > 1``. Here we clamp both arguments to ``[0, 1]`` first, so the
     return value is always a well-defined harmonic-mean F-score in ``[0, 1]``.
-    A DEBUG log entry is emitted when clamping changes either input by more
-    than 0.05 so noisy graphs stay traceable.
+    The raw ``Fsuf`` and ``Fcom`` values remain signed in the JSON report; this
+    clamp is only used for the F-score combination. A DEBUG log entry is emitted
+    when clamping changes either input by more than 0.05 so noisy graphs stay
+    traceable.
     """
     if Fsuf != Fsuf or Fcom != Fcom:  # NaN propagation
         return _NAN
