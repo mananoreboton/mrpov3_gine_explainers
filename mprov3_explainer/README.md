@@ -78,7 +78,7 @@ zeros / unclamped Ff1 / soft-mask fidelity headline of the previous version.
 | `seed` | the RNG seed used for this run (CLI `--seed`) | integer | Self-describing parameter; default `42`. |
 | `run_status`, `run_status_note` | compact quality flag for the explainer run | text | `failed_all_degenerate_masks` means every attempted mask had spread below τ and the headline means must not be used as valid thesis evidence. |
 | `wall_time_s` | wall-clock seconds spent inside `run_explanations` for this explainer | `[0, ∞)` | — |
-| `per_graph[*]` | per-graph mirror of the headline keys (`fidelity_plus`, `fidelity_minus`, `pyg_characterization`, `*_soft` siblings, `paper_*`, `mask_spread`, `mask_entropy`, `valid`, `correct_class`, `has_node_mask`, `has_edge_mask`, `elapsed_s`) | per key | NaN values are serialized as JSON `null`. |
+| `per_graph[*]` | per-graph mirror of the headline keys (`fidelity_plus`, `fidelity_minus`, `pyg_characterization`, `*_soft` siblings, `paper_*`, `mask_spread`, `mask_entropy`, `valid`, `correct_class`, `has_node_mask`, `has_edge_mask`, `elapsed_s`) | per key | NaN and infinity values are recursively serialized as JSON `null`; writers use `allow_nan=False` to enforce strict JSON. |
 
 ### Sweep dispatch (paper metrics)
 

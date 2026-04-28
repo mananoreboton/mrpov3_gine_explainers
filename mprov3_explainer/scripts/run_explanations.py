@@ -76,6 +76,7 @@ from mprov3_explainer import (
     aggregate_fidelity,
     collect_prediction_baseline,
     diagnose_explanation_run,
+    dumps_strict_json,
     explanations_run_dir,
     get_device,
     resolve_dataset_dir,
@@ -299,17 +300,6 @@ def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunCon
     return build_explanation_run_context_for_fold(args, k, num_folds)
 
 
-def _nan_to_none(value: Any) -> Any:
-    """JSON-safe NaN/inf -> None mapper.
-
-    Standard ``json.dumps`` emits the literal token ``NaN`` (which is not valid
-    JSON), so we convert NaN and ±inf to ``None`` (rendered as ``null``).
-    """
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    return value
-
-
 def _fmt(x: float) -> str:
     """Pretty-print a float that may be NaN."""
     return "nan" if isinstance(x, float) and math.isnan(x) else f"{x:.4f}"
@@ -505,7 +495,7 @@ def run_one_explainer(
         "per_graph": per_graph_entries,
     }
     (out_path / "explanation_report.json").write_text(
-        json.dumps(report, indent=2, default=_nan_to_none), encoding="utf-8",
+        dumps_strict_json(report, indent=2), encoding="utf-8",
     )
 
     masks_dir = out_path / "masks"
@@ -531,7 +521,7 @@ def run_one_explainer(
             mask_data["node_mask"] = nm.tolist() if hasattr(nm, "tolist") else nm
 
         (masks_dir / f"{r.graph_id}.json").write_text(
-            json.dumps(mask_data, indent=2), encoding="utf-8",
+            dumps_strict_json(mask_data, indent=2), encoding="utf-8",
         )
     print(f"Report and masks saved to {out_path}")
 
@@ -596,7 +586,7 @@ def write_comparison_report(
     }
     json_path = comparison_path / "comparison_report.json"
     json_path.write_text(
-        json.dumps(comparison, indent=2, default=_nan_to_none), encoding="utf-8",
+        dumps_strict_json(comparison, indent=2), encoding="utf-8",
     )
     return json_path
 
@@ -617,7 +607,7 @@ def write_prediction_baseline(
             1 for entry in prediction_baseline.values() if not entry.correct_class
         ),
     }
-    baseline_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    baseline_path.write_text(dumps_strict_json(payload, indent=2), encoding="utf-8")
     return baseline_path
 
 

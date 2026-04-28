@@ -11,6 +11,7 @@ from mprov3_explainer.explainers import (
     get_spec,
     validate_explainer,
 )
+from mprov3_explainer.json_utils import dumps_strict_json, to_strict_jsonable
 from mprov3_explainer.paths import (
     explanations_run_dir,
     resolve_checkpoint_path,
@@ -48,6 +49,8 @@ __all__ = [
     "get_builder",
     "get_spec",
     "validate_explainer",
+    "dumps_strict_json",
+    "to_strict_jsonable",
     "explanations_run_dir",
     "resolve_checkpoint_path",
     "resolve_dataset_dir",
