@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Run all explainers on the trained GINE for the single best CV fold (from classify.py or train.py
-summaries). Writes per-explainer reports under results/folds/fold_<k>/explanations/ and
-comparison_report.json (no HTML).
+Run all explainers on trained GINE fold(s). By default the single best CV fold is chosen
+(from classify.py or train.py summaries), but ``--folds`` lets you run on an explicit list.
+
+Writes per-explainer reports under ``results/folds/fold_<k>/explanations/`` and
+``comparison_report.json`` (no HTML) for each fold.
 
 Usage:
   uv run python scripts/run_explanations.py
   uv run python scripts/run_explanations.py --split validation
   uv run python scripts/run_explanations.py --fold_metric train_accuracy
+  uv run python scripts/run_explanations.py --folds 0 2 4
   uv run python scripts/run_explanations.py --no_mask_spread_filter
 
 GNN results are read from ``mprov3_gine/results`` and the MPro snapshot from the workspace
@@ -57,10 +60,12 @@ from mprov3_gine_explainer_defaults import (
     RESULTS_DATASETS,
     RESULTS_DIR_NAME,
     RESULTS_EXPLANATIONS,
+    RESULTS_TRAININGS,
     SplitConfig,
     read_num_folds_for_fold,
     resolve_best_fold_index,
     resolve_checkpoint_path,
+    resolve_fold_indices,
     seed_everything,
 )
 
@@ -124,11 +129,21 @@ def parse_args() -> argparse.Namespace:
         help="Data split whose loader is used for the explanation loop (default: test).",
     )
     parser.add_argument(
+        "--folds",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="K",
+        help="Explicit fold indices to run (e.g. --folds 0 2 4). Overrides --fold_metric. "
+             "Error if any index is out of range for the CV split.",
+    )
+    parser.add_argument(
         "--fold_metric",
         type=str,
         choices=("test_accuracy", "train_accuracy"),
         default="test_accuracy",
-        help="Pick fold from classification_summary (test) or training_summary (train).",
+        help="Pick fold from classification_summary (test) or training_summary (train). "
+             "Ignored when --folds is given.",
     )
     parser.add_argument(
         "--no_mask_spread_filter",
@@ -160,17 +175,35 @@ def _get_graph_id(data: Any, index: int) -> str:
     return getattr(data, "pdb_id", f"graph_{index}")
 
 
-def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunContext:
-    """Resolve paths, loaders, best fold, and trained GNN (configuration for all explainers)."""
+def _read_num_folds_from_summary(results_root: Path) -> int:
+    """Read ``num_folds`` from the training summary without picking a best fold."""
+    summary_path = results_root / RESULTS_TRAININGS / "training_summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(
+            f"Missing {summary_path}; run mprov3_gine/train.py first."
+        )
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    folds = data.get("folds") or []
+    if not folds:
+        raise FileNotFoundError(
+            f"{summary_path} has no folds; run train.py on at least one fold."
+        )
+    return int(folds[0]["num_folds"])
+
+
+def build_explanation_run_context_for_fold(
+    args: argparse.Namespace,
+    fold_index: int,
+    num_folds: int,
+) -> ExplanationRunContext:
+    """Build an ExplanationRunContext for an explicit fold index."""
     results_root = _GNN_PROJECT_ROOT / RESULTS_DIR_NAME
     if not results_root.exists():
         raise FileNotFoundError(f"Results root not found: {results_root}")
 
-    k = resolve_best_fold_index(results_root, args.fold_metric)
-    num_folds = read_num_folds_for_fold(results_root, k)
+    k = fold_index
     print(
-        f"Using fold_index={k} (num_folds={num_folds}, fold_metric={args.fold_metric}, "
-        f"split={args.split})",
+        f"Using fold_index={k} (num_folds={num_folds}, split={args.split})",
         flush=True,
     )
 
@@ -246,6 +279,21 @@ def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunCon
         num_classes=DEFAULT_OUT_CLASSES,
         apply_mask_spread_filter=not args.no_mask_spread_filter,
     )
+
+
+def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunContext:
+    """Resolve paths, loaders, best fold, and trained GNN (configuration for all explainers)."""
+    results_root = _GNN_PROJECT_ROOT / RESULTS_DIR_NAME
+    if not results_root.exists():
+        raise FileNotFoundError(f"Results root not found: {results_root}")
+
+    k = resolve_best_fold_index(results_root, args.fold_metric)
+    num_folds = read_num_folds_for_fold(results_root, k)
+    print(
+        f"Best fold: fold_index={k} (fold_metric={args.fold_metric})",
+        flush=True,
+    )
+    return build_explanation_run_context_for_fold(args, k, num_folds)
 
 
 def _nan_to_none(value: Any) -> Any:
@@ -524,27 +572,14 @@ def write_comparison_report(
     return json_path
 
 
-def main() -> None:
-    args = parse_args()
-    seed_everything(args.seed)
-    print(
-        f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}; "
-        f"top-k fidelity fraction={args.top_k_fraction}",
-        flush=True,
-    )
-
-    for name in AVAILABLE_EXPLAINERS:
-        validate_explainer(name)
-
-    ctx = build_explanation_run_context(args)
+def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
+    """Run all explainers on a single fold context and write the comparison report."""
     explainer_names = list(AVAILABLE_EXPLAINERS)
 
     all_summaries: dict[str, dict] = {}
     all_per_graph: dict[str, list[dict]] = {}
 
     for explainer_name in explainer_names:
-        # Re-seed before each explainer so the order of explainers does not
-        # affect their individual results.
         seed_everything(args.seed)
         summary, per_graph = run_one_explainer(
             ctx,
@@ -567,6 +602,36 @@ def main() -> None:
         top_k_fraction=args.top_k_fraction,
     )
     print(f"\nComparison report: {json_path}")
+
+
+def main() -> None:
+    args = parse_args()
+    seed_everything(args.seed)
+    print(
+        f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}; "
+        f"top-k fidelity fraction={args.top_k_fraction}",
+        flush=True,
+    )
+
+    for name in AVAILABLE_EXPLAINERS:
+        validate_explainer(name)
+
+    if args.folds is not None:
+        results_root = _GNN_PROJECT_ROOT / RESULTS_DIR_NAME
+        num_folds = _read_num_folds_from_summary(results_root)
+        fold_indices = resolve_fold_indices(num_folds, fold_indices=args.folds)
+        print(
+            f"[INFO] Running explanations for {len(fold_indices)} fold(s): "
+            f"{fold_indices} (num_folds={num_folds})",
+            flush=True,
+        )
+        for k in fold_indices:
+            print(f"\n{'='*60}\n  FOLD {k}\n{'='*60}", flush=True)
+            ctx = build_explanation_run_context_for_fold(args, k, num_folds)
+            _run_fold(args, ctx)
+    else:
+        ctx = build_explanation_run_context(args)
+        _run_fold(args, ctx)
 
 
 if __name__ == "__main__":

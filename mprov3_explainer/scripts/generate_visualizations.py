@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Draw RDKit PNGs from saved explanation masks (single fold under results/folds/fold_*/)
-and write a static HTML report with explainer metrics, mask images, and raw mask JSON.
+Draw RDKit PNGs from saved explanation masks and write static HTML reports.
+
+Supports a single fold (auto-discovered or via ``--folds``) or multiple folds at once.
+When multiple folds are processed, a global index page linking all per-fold reports is
+written to ``results/explanation_web_report/index.html``.
 
 Usage:
   uv run python scripts/generate_visualizations.py
+  uv run python scripts/generate_visualizations.py --folds 0 2 4
   uv run python scripts/generate_visualizations.py --report-only
   uv run python scripts/generate_visualizations.py --no-report
 
 Reads ``mprov3_explainer/results`` and ligand SDFs from the workspace default MPro snapshot
-(unless ``--report-only``). The report is written to
+(unless ``--report-only``). Per-fold reports are written to
 ``results/folds/fold_*/explanation_web_report/index.html`` with relative links to
 ``visualizations/`` and embedded mask JSON; open the file in a browser (no HTTP server required).
 """
@@ -37,7 +41,10 @@ from mprov3_gine_explainer_defaults import (
 
 from mprov3_explainer import AVAILABLE_EXPLAINERS, validate_explainer, visualizations_run_dir
 from mprov3_explainer.visualize import draw_molecule_with_mask
-from mprov3_explainer.web_report import write_fold_explanation_web_report
+from mprov3_explainer.web_report import (
+    write_fold_explanation_web_report,
+    write_global_explanation_index,
+)
 
 
 def _parse_args():
@@ -45,26 +52,35 @@ def _parse_args():
 
     p = argparse.ArgumentParser(
         description=(
-            "Write mask PNGs from one fold of explainer outputs (RDKit) and/or emit a static "
-            "HTML report under explanation_web_report/. Uses mprov3_explainer/results."
+            "Write mask PNGs from explainer outputs (RDKit) and/or emit static "
+            "HTML reports. Supports one or many folds. Uses mprov3_explainer/results."
         ),
+    )
+    p.add_argument(
+        "--folds",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="K",
+        help="Explicit fold indices to visualize (e.g. --folds 0 2 4). "
+             "If omitted, auto-discovers all folds with explanation outputs.",
     )
     p.add_argument(
         "--no-report",
         action="store_true",
-        help="Skip writing explanation_web_report/index.html.",
+        help="Skip writing explanation_web_report/index.html (per-fold and global).",
     )
     p.add_argument(
         "--report-only",
         action="store_true",
-        help="Only regenerate the HTML report from existing explanations/ and visualizations/ "
+        help="Only regenerate HTML reports from existing explanations/ and visualizations/ "
         "(no RDKit drawing; does not require MPro SDFs).",
     )
     return p.parse_args()
 
 
-def _discover_single_fold(results_root: Path) -> tuple[int, Path]:
-    """Return (fold_index, fold_root) for the unique fold that has explanation outputs."""
+def _discover_folds(results_root: Path) -> list[tuple[int, Path]]:
+    """Return all (fold_index, fold_root) pairs that have explanation outputs."""
     folds_parent = results_root / "folds"
     if not folds_parent.is_dir():
         raise FileNotFoundError(
@@ -81,27 +97,18 @@ def _discover_single_fold(results_root: Path) -> tuple[int, Path]:
         exp_base = sub / RESULTS_EXPLANATIONS
         if not exp_base.is_dir():
             continue
-        has_any = False
         for name in AVAILABLE_EXPLAINERS:
             rep = exp_base / name / "explanation_report.json"
             masks = exp_base / name / "masks"
             if rep.is_file() and masks.is_dir():
-                has_any = True
+                found.append((fi, sub))
                 break
-        if has_any:
-            found.append((fi, sub))
     if not found:
         raise FileNotFoundError(
             f"No explainer outputs under {folds_parent}/*/explanations/. "
             "Run run_explanations.py first.",
         )
-    if len(found) > 1:
-        ids = [f[0] for f in found]
-        raise FileNotFoundError(
-            f"Multiple folds with explanations: {ids}. "
-            "Keep a single fold under results/folds/ or remove stale outputs.",
-        )
-    return found[0]
+    return found
 
 
 def _explainers_in_fold(explanations_base: Path) -> list[str]:
@@ -117,30 +124,30 @@ def _explainers_in_fold(explanations_base: Path) -> list[str]:
     return present
 
 
-def main() -> None:
-    args = _parse_args()
-    results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
-    if not results_root.exists():
-        raise FileNotFoundError(f"Results root not found: {results_root}")
+def _process_fold(
+    fold_index: int,
+    fold_root: Path,
+    *,
+    report_only: bool,
+    no_report: bool,
+    sdf_dir: Path | None,
+) -> dict | None:
+    """Process a single fold: draw PNGs and/or write per-fold HTML report.
 
-    fold_index, fold_root = _discover_single_fold(results_root)
+    Returns a fold entry dict for the global index, or None if --no-report.
+    """
     explanations_base = fold_root / RESULTS_EXPLANATIONS
     explainer_names = _explainers_in_fold(explanations_base)
     if not explainer_names:
-        raise FileNotFoundError(f"No explainer dirs with masks under {explanations_base}")
+        print(f"Fold {fold_index}: no explainer dirs with masks, skipping.", flush=True)
+        return None
     for n in explainer_names:
         validate_explainer(n)
 
-    if args.report_only:
+    if report_only:
         print(f"Fold {fold_index}: --report-only (skipping RDKit PNG generation)", flush=True)
-    if not args.report_only:
-        data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
-        if not data_root.exists():
-            raise FileNotFoundError(f"Data root not found: {data_root}")
-        sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
-        if not sdf_dir.is_dir():
-            raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
 
+    if not report_only and sdf_dir is not None:
         print(f"Fold {fold_index}: writing PNGs for {', '.join(explainer_names)}", flush=True)
 
         for explainer_name in explainer_names:
@@ -180,9 +187,76 @@ def main() -> None:
                     print(f"  {explainer_name}: {out_png.relative_to(fold_root)}", flush=True)
             print(f"{explainer_name}: {drawn} image(s) under {vis_out}", flush=True)
 
-    if not args.no_report:
-        out_html = write_fold_explanation_web_report(fold_root, fold_index, explainer_names)
-        print(f"Web report written: {out_html}", flush=True)
+    if no_report:
+        return None
+
+    out_html = write_fold_explanation_web_report(fold_root, fold_index, explainer_names)
+    print(f"Web report written: {out_html}", flush=True)
+
+    per_explainer_summary: dict[str, dict] = {}
+    comparison_path = explanations_base / "comparison_report.json"
+    if comparison_path.is_file():
+        comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+        per_explainer_summary = comparison.get("per_explainer", {})
+
+    return {
+        "fold_index": fold_index,
+        "explainer_names": explainer_names,
+        "per_explainer_summary": per_explainer_summary,
+    }
+
+
+def main() -> None:
+    args = _parse_args()
+    results_root = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME
+    if not results_root.exists():
+        raise FileNotFoundError(f"Results root not found: {results_root}")
+
+    all_folds = _discover_folds(results_root)
+
+    if args.folds is not None:
+        available_indices = {fi for fi, _ in all_folds}
+        for k in args.folds:
+            if k not in available_indices:
+                raise ValueError(
+                    f"Fold {k} has no explanation outputs under "
+                    f"{results_root / 'folds' / f'fold_{k}' / 'explanations'}. "
+                    f"Available folds with explanations: {sorted(available_indices)}"
+                )
+        seen: set[int] = set()
+        target_folds = []
+        for k in args.folds:
+            if k not in seen:
+                seen.add(k)
+                fold_root = next(p for fi, p in all_folds if fi == k)
+                target_folds.append((k, fold_root))
+    else:
+        target_folds = all_folds
+
+    sdf_dir: Path | None = None
+    if not args.report_only:
+        data_root = _REPO_ROOT / DEFAULT_MPRO_SNAPSHOT_DIR_NAME
+        if not data_root.exists():
+            raise FileNotFoundError(f"Data root not found: {data_root}")
+        sdf_dir = data_root / MPRO_LIGAND_DIR / MPRO_LIGAND_SDF_SUBDIR
+        if not sdf_dir.is_dir():
+            raise FileNotFoundError(f"SDF directory not found: {sdf_dir}")
+
+    fold_entries: list[dict] = []
+    for fold_index, fold_root in target_folds:
+        entry = _process_fold(
+            fold_index,
+            fold_root,
+            report_only=args.report_only,
+            no_report=args.no_report,
+            sdf_dir=sdf_dir,
+        )
+        if entry is not None:
+            fold_entries.append(entry)
+
+    if fold_entries and len(target_folds) > 1:
+        global_html = write_global_explanation_index(results_root, fold_entries)
+        print(f"Global index written: {global_html}", flush=True)
 
 
 if __name__ == "__main__":
