@@ -399,6 +399,9 @@ def run_one_explainer(
     )
     mean_mask_spread = nanmean([r.mask_spread for r in results])
     mean_mask_entropy = nanmean([r.mask_entropy for r in results])
+    mean_mask_entropy_normalized = nanmean([
+        r.mask_entropy_normalized for r in results
+    ])
     run_status, run_status_note = diagnose_explanation_run(
         results,
         mask_spread_tolerance=MASK_SPREAD_TOLERANCE,
@@ -454,6 +457,7 @@ def run_one_explainer(
             "has_edge_mask": r.has_edge_mask,
             "mask_spread": r.mask_spread,
             "mask_entropy": r.mask_entropy,
+            "mask_entropy_normalized": r.mask_entropy_normalized,
             "elapsed_s": r.elapsed_s,
         })
 
@@ -486,6 +490,7 @@ def run_one_explainer(
         "num_prediction_baseline_mismatch": num_prediction_baseline_mismatch,
         "mean_mask_spread": mean_mask_spread,
         "mean_mask_entropy": mean_mask_entropy,
+        "mean_mask_entropy_normalized": mean_mask_entropy_normalized,
         "top_k_fraction": float(top_k_fraction),
         "seed": int(seed),
         "run_status": run_status,
@@ -548,6 +553,7 @@ def run_one_explainer(
         "num_prediction_baseline_mismatch": num_prediction_baseline_mismatch,
         "mean_mask_spread": mean_mask_spread,
         "mean_mask_entropy": mean_mask_entropy,
+        "mean_mask_entropy_normalized": mean_mask_entropy_normalized,
         "top_k_fraction": float(top_k_fraction),
         "seed": int(seed),
         "run_status": run_status,

@@ -94,6 +94,7 @@ class ExplanationResult:
     has_edge_mask: bool = False
     mask_spread: float = 0.0
     mask_entropy: float = 0.0
+    mask_entropy_normalized: float = 0.0
     elapsed_s: float = 0.0
 
 
@@ -815,6 +816,24 @@ def _mask_entropy(mask: Optional[torch.Tensor]) -> float:
         return 0.0
 
 
+def _mask_entropy_normalized(mask: Optional[torch.Tensor]) -> float:
+    """Mask-size-normalized entropy in ``[0, 1]``.
+
+    Raw entropy has maximum ``log(M)`` for ``M`` mask entries, so it is not
+    directly comparable across molecules or across node-mask and edge-mask
+    explainers. Dividing by ``log(M)`` makes uniform masks approach 1 and
+    maximally concentrated masks approach 0.
+    """
+    if mask is None or mask.numel() <= 1:
+        return 0.0
+    entropy = _mask_entropy(mask)
+    max_entropy = math.log(float(mask.numel()))
+    if max_entropy <= 0.0:
+        return 0.0
+    value = entropy / max_entropy
+    return max(0.0, min(1.0, float(value)))
+
+
 def _representative_mask(explanation: Explanation) -> Optional[torch.Tensor]:
     """Return whichever mask is present, preferring node mask, for spread/entropy."""
     nm = explanation.get("node_mask")
@@ -1134,6 +1153,7 @@ def run_explanations(
             rep_mask = _representative_mask(explanation)
             spread_val = _mask_spread(rep_mask)
             entropy_val = _mask_entropy(rep_mask)
+            entropy_norm_val = _mask_entropy_normalized(rep_mask)
 
             yield ExplanationResult(
                 graph_id=graph_id,
@@ -1156,6 +1176,7 @@ def run_explanations(
                 has_edge_mask=has_edge_mask,
                 mask_spread=spread_val,
                 mask_entropy=entropy_val,
+                mask_entropy_normalized=entropy_norm_val,
                 elapsed_s=elapsed,
             )
             graph_index += 1

@@ -114,7 +114,8 @@ def write_fold_explanation_web_report(
                 ("paper_comprehensiveness", "Fcom (raw)"),
                 ("paper_f1_fidelity", "Ff1 (clamped)"),
                 ("mask_spread", "Mask spread"),
-                ("mask_entropy", "Mask entropy"),
+                ("mask_entropy", "Mask entropy (raw)"),
+                ("mask_entropy_normalized", "Mask entropy (norm)"),
                 ("valid", "valid"),
                 ("correct_class", "correct class"),
                 ("pred_class", "pred class"),
@@ -183,7 +184,8 @@ def write_fold_explanation_web_report(
         ("num_misclassified", "Misclass.", "num"),
         ("num_prediction_baseline_mismatch", "Pred. drift", "num"),
         ("mean_mask_spread", "Spread", "num"),
-        ("mean_mask_entropy", "Entropy", "num"),
+        ("mean_mask_entropy", "Entropy (raw)", "num"),
+        ("mean_mask_entropy_normalized", "Entropy (norm)", "num"),
     ]
     thead = "".join(
         f'<th data-sort="{html.escape(key)}" data-type="{tp}">{html.escape(label)}</th>'
@@ -469,6 +471,7 @@ _GLOBAL_METRIC_KEYS = [
     ("mean_paper_sufficiency_all_graphs", "All Fsuf (raw)"),
     ("mean_paper_comprehensiveness_all_graphs", "All Fcom (raw)"),
     ("mean_paper_f1_fidelity_all_graphs", "All Ff1 (clamped)"),
+    ("mean_mask_entropy_normalized", "Entropy (norm)"),
     ("num_valid", "Valid"),
     ("wall_time_s", "Wall (s)"),
 ]

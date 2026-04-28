@@ -12,6 +12,8 @@ from mprov3_explainer.pipeline import (
     DEFAULT_TOP_K_FRACTION,
     _binarize_explanation_top_k,
     _clamp_unit,
+    _mask_entropy,
+    _mask_entropy_normalized,
     _paper_f1_fidelity,
     _paper_metrics_from_edge_mask,
     _paper_metrics_from_masks,
@@ -249,3 +251,14 @@ def test_diagnose_explanation_run_marks_all_degenerate_failure():
 def test_default_top_k_fraction_is_graphframex_canonical():
     """GraphFramEx (Amara et al., 2022) uses k=0.2 by default."""
     assert DEFAULT_TOP_K_FRACTION == pytest.approx(0.2)
+
+
+def test_mask_entropy_normalized_removes_mask_size_scale():
+    uniform_small = torch.ones(4)
+    uniform_large = torch.ones(16)
+    point_mass = torch.tensor([1.0, 0.0, 0.0, 0.0])
+
+    assert _mask_entropy(uniform_large) > _mask_entropy(uniform_small)
+    assert _mask_entropy_normalized(uniform_small) == pytest.approx(1.0)
+    assert _mask_entropy_normalized(uniform_large) == pytest.approx(1.0)
+    assert _mask_entropy_normalized(point_mass) == pytest.approx(0.0)

@@ -81,6 +81,7 @@ def _expected_fields() -> set[str]:
         "has_edge_mask",
         "mask_spread",
         "mask_entropy",
+        "mask_entropy_normalized",
         "elapsed_s",
         "explanation",
     }
@@ -132,6 +133,7 @@ def test_run_explanations_smoke_gradexpnode():
         # Diagnostics
         assert r.mask_spread >= 0.0
         assert r.mask_entropy >= 0.0
+        assert 0.0 <= r.mask_entropy_normalized <= 1.0
         # Top-k Ff1 is in [0, 1] when finite (clamped)
         if not math.isnan(r.paper_f1_fidelity):
             assert 0.0 <= r.paper_f1_fidelity <= 1.0
