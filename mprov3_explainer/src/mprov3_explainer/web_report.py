@@ -816,6 +816,11 @@ def write_global_explanation_index(
         for n in all_explainer_names
     )
 
+    index_latex = _build_latex_block_index_page(fold_entries_sorted, all_explainer_names)
+    index_latex_block = _render_latex_export_block(
+        index_latex, "Export all tables as LaTeX",
+    )
+
     doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -866,6 +871,7 @@ def write_global_explanation_index(
       user-select: none;
     }}
     table.summary th:hover {{ color: var(--accent); }}
+{_LATEX_EXPORT_CSS}
   </style>
 </head>
 <body>
@@ -874,9 +880,11 @@ def write_global_explanation_index(
     <p class="muted">{len(fold_entries_sorted)} fold(s) &middot; HTML generated <code>{html.escape(gen_at)}</code></p>
     <nav>
       <strong>Jump:</strong>
+      <a href="explainer_summary.html">Explainer summary</a> &middot;
       <a href="#fold-summary">Fold summary</a> &middot;
       <a href="#per-explainer">Per-explainer</a> &middot;
-      {explainer_nav}
+      {explainer_nav} &middot;
+      <a href="#latex">LaTeX</a>
     </nav>
   </header>
 
@@ -893,6 +901,12 @@ def write_global_explanation_index(
     <h2>Per-explainer across folds</h2>
     <p class="muted">Each explainer is shown in two tables: valid-only aggregates and all-graph aggregates with wall-clock runtime.</p>
     {"".join(explainer_sections)}
+  </section>
+
+  <section id="latex">
+    <h2>LaTeX export</h2>
+    <p class="muted">Ready-to-paste LaTeX tables (requires <code>booktabs</code> package).</p>
+    {index_latex_block}
   </section>
 
   <script>
@@ -924,6 +938,7 @@ def write_global_explanation_index(
     }});
   }});
 }})();
+{_LATEX_COPY_JS}
   </script>
 </body>
 </html>
@@ -1242,6 +1257,488 @@ def _build_mean_across_folds_table(
     )
 
 
+def _build_per_fold_explainer_table(
+    fold_entries_sorted: list[dict],
+    all_explainer_names: list[str],
+    fold_index: int,
+    *,
+    table_kind: str,
+) -> str:
+    """One table for a single fold: one row per explainer with its metrics."""
+    block_key = "valid_result_metrics" if table_kind == "valid" else "result_metrics"
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    metric_labels = [label for _, label in _METRIC_COLUMNS]
+
+    header_cells = ['<th data-sort="explainer" data-type="text">Explainer</th>']
+    if table_kind == "valid":
+        header_cells.append(
+            f'<th data-sort="{_VALID_TABLE_COUNT_COL[0]}" data-type="num">'
+            f"{_VALID_TABLE_COUNT_COL[1]}</th>"
+        )
+    else:
+        for key, label, _ in _RESULT_TABLE_LEADING_COLS:
+            header_cells.append(
+                f'<th data-sort="{key}" data-type="num">{label}</th>'
+            )
+    for label in metric_labels:
+        col_id = label.replace(" ", "_")
+        header_cells.append(
+            f'<th data-sort="{html.escape(col_id)}" data-type="num">{html.escape(label)}</th>'
+        )
+
+    entry = next((e for e in fold_entries_sorted if e["fold_index"] == fold_index), None)
+    tbody_rows: list[str] = []
+    if entry is not None:
+        per_expl = entry.get("per_explainer_summary", {})
+        for name in all_explainer_names:
+            s = per_expl.get(name, {})
+            block = s.get(block_key, {}) if isinstance(s, dict) else {}
+            cells = [f"<td>{html.escape(name)}</td>"]
+            if table_kind == "valid":
+                val = block.get("num_valid_graphs") if isinstance(block, dict) else None
+                cells.append(f'<td data-sort-value="{_sort_value(val, "num")}">{_fmt_num(val)}</td>')
+            else:
+                for key, _, _ in _RESULT_TABLE_LEADING_COLS:
+                    val = block.get(key) if isinstance(block, dict) else None
+                    cells.append(f'<td data-sort-value="{_sort_value(val, "num")}">{_fmt_num(val)}</td>')
+            for mk in metric_keys:
+                val = block.get(mk) if isinstance(block, dict) else None
+                cells.append(f'<td data-sort-value="{_sort_value(val, "num")}">{_fmt_num(val)}</td>')
+            tbody_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    thead = "<tr>" + "".join(header_cells) + "</tr>"
+    tbody = "\n".join(tbody_rows) if tbody_rows else '<tr><td colspan="1">No data</td></tr>'
+    return (
+        f'<table class="summary"><thead>{thead}</thead>'
+        f"<tbody>{tbody}</tbody></table>"
+    )
+
+
+def _build_per_fold_sections(
+    fold_entries_sorted: list[dict],
+    all_explainer_names: list[str],
+) -> str:
+    """Build one collapsible section per fold with valid + all-graph tables."""
+    parts: list[str] = []
+    for entry in fold_entries_sorted:
+        k = entry["fold_index"]
+        fold_link = f"folds/fold_{k}/{EXPLANATION_WEB_REPORT_DIR}/index.html"
+        valid_tbl = _build_per_fold_explainer_table(
+            fold_entries_sorted, all_explainer_names, k, table_kind="valid",
+        )
+        all_tbl = _build_per_fold_explainer_table(
+            fold_entries_sorted, all_explainer_names, k, table_kind="all",
+        )
+        parts.append(
+            f'<section id="fold-{k}">'
+            f'<h3>Fold {k} <a class="muted" href="{html.escape(fold_link, quote=True)}" '
+            f'style="font-size:0.8rem;margin-left:0.5rem">(open fold report)</a></h3>'
+            f'<h4 class="muted">Valid result metrics</h4>{valid_tbl}'
+            f'<h4 class="muted">Result metrics</h4>{all_tbl}'
+            f"</section>"
+        )
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# LaTeX generation
+# ---------------------------------------------------------------------------
+
+_LATEX_METRIC_SHORT_LABELS: tuple[str, ...] = (
+    r"$F_\text{suf}$",
+    r"$F_\text{com}$",
+    r"$F_{f1}$",
+    r"Fid$+$",
+    r"Fid$-$",
+    r"Char",
+    r"AUC",
+    r"GEF",
+)
+
+
+def _latex_escape(s: str) -> str:
+    """Escape LaTeX special characters in plain-text strings."""
+    for ch, repl in (("_", r"\_"), ("&", r"\&"), ("%", r"\%"), ("#", r"\#")):
+        s = s.replace(ch, repl)
+    return s
+
+
+def _latex_num(x: float | None, fmt: str = ".4f") -> str:
+    if x is None:
+        return "---"
+    return f"{x:{fmt}}"
+
+
+def _latex_table_mean_across_folds(
+    all_explainer_names: list[str],
+    vectors: dict[str, dict[str, list[float | None]]],
+    *,
+    table_kind: str,
+    caption: str,
+    label: str,
+) -> str:
+    """LaTeX table: mean of each metric across folds, one row per explainer."""
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    n_metrics = len(metric_keys)
+    col_spec = "l" + "r" * n_metrics
+    header = " & ".join(_LATEX_METRIC_SHORT_LABELS)
+
+    lines = [
+        r"\begin{table}[htbp]",
+        r"\centering",
+        r"\caption{" + caption + "}",
+        r"\label{" + label + "}",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+        r"Explainer & " + header + r" \\",
+        r"\midrule",
+    ]
+    for name in all_explainer_names:
+        vecs = vectors[name]
+        vals = [_latex_num(_nanmean_safe(vecs.get(mk, []))) for mk in metric_keys]
+        lines.append(_latex_escape(name) + " & " + " & ".join(vals) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines)
+
+
+def _latex_table_coverage(
+    all_explainer_names: list[str],
+    valid_vectors: dict[str, dict[str, list[float | None]]],
+    all_vectors: dict[str, dict[str, list[float | None]]],
+    fold_entries_sorted: list[dict],
+    *,
+    caption: str,
+    label: str,
+) -> str:
+    """LaTeX table: valid-graph coverage per explainer."""
+    fold_indices = [e["fold_index"] for e in fold_entries_sorted]
+    fold_headers = " & ".join(f"Fold {k}" for k in fold_indices)
+    col_spec = "l" + "r" * 3 + "r" * len(fold_indices)
+
+    lines = [
+        r"\begin{table}[htbp]",
+        r"\centering",
+        r"\caption{" + caption + "}",
+        r"\label{" + label + "}",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+        r"Explainer & Valid & Total & \% & " + fold_headers + r" \\",
+        r"\midrule",
+    ]
+    for name in all_explainer_names:
+        v_valid = valid_vectors[name].get("num_valid_graphs", [])
+        v_total = all_vectors[name].get("num_graphs", [])
+        tv = sum(x for x in v_valid if x is not None and isinstance(x, (int, float)))
+        tg = sum(x for x in v_total if x is not None and isinstance(x, (int, float)))
+        pct = f"{tv / tg * 100:.1f}" if tg > 0 else "---"
+        per_fold = []
+        for vv, vt in zip(v_valid, v_total):
+            vv_n = vv if vv is not None and isinstance(vv, (int, float)) else 0
+            vt_n = vt if vt is not None and isinstance(vt, (int, float)) else 0
+            per_fold.append(f"{int(vv_n)}/{int(vt_n)}" if vt_n > 0 else "---")
+        lines.append(
+            _latex_escape(name) + f" & {int(tv)} & {int(tg)} & {pct} & "
+            + " & ".join(per_fold) + r" \\"
+        )
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines)
+
+
+def _latex_table_stats(
+    all_explainer_names: list[str],
+    vectors: dict[str, dict[str, list[float | None]]],
+    weight_key: str | None,
+    *,
+    caption: str,
+    label: str,
+) -> str:
+    """LaTeX table: median, IQR, mean, std (weighted or unweighted) per metric."""
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    sub = ["Med", "Q1", "Q3", "Mean", "Std"]
+    n_sub = len(sub)
+    n_metrics = len(metric_keys)
+    col_spec = "l" + "r" * (n_metrics * n_sub)
+
+    multi_header_parts: list[str] = []
+    for short in _LATEX_METRIC_SHORT_LABELS:
+        multi_header_parts.append(rf"\multicolumn{{{n_sub}}}{{c}}{{{short}}}")
+    multi_header = " & ".join(multi_header_parts)
+
+    sub_header = " & ".join(sub * n_metrics)
+
+    lines = [
+        r"\begin{table}[htbp]",
+        r"\centering",
+        r"\footnotesize",
+        r"\caption{" + caption + "}",
+        r"\label{" + label + "}",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+        r"Explainer & " + multi_header + r" \\",
+        " & " + sub_header + r" \\",
+        r"\midrule",
+    ]
+    for name in all_explainer_names:
+        vecs = vectors[name]
+        wts_raw = vecs.get(weight_key, []) if weight_key else None
+        parts: list[str] = []
+        for mk in metric_keys:
+            vals_raw = vecs.get(mk, [])
+            if weight_key is not None:
+                vals, wts = _filter_numeric_pairs(vals_raw, wts_raw)
+                med = _weighted_median(vals, wts)
+                q1, q3 = _weighted_iqr(vals, wts)
+                mean = _weighted_mean(vals, wts)
+                std = _weighted_std(vals, wts)
+            else:
+                med, q1, q3, mean, std = _unweighted_stats(vals_raw)
+            for stat in (med, q1, q3, mean, std):
+                parts.append(_latex_num(stat))
+        lines.append(_latex_escape(name) + " & " + " & ".join(parts) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines)
+
+
+def _latex_table_fold_summary(
+    fold_entries_sorted: list[dict],
+    *,
+    table_kind: str,
+    caption: str,
+    label: str,
+) -> str:
+    """LaTeX table: metrics averaged across explainers within each fold (for index.html)."""
+    block_key = "valid_result_metrics" if table_kind == "valid" else "result_metrics"
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    col_spec = "l" + "r" * len(metric_keys)
+    header = " & ".join(_LATEX_METRIC_SHORT_LABELS)
+
+    lines = [
+        r"\begin{table}[htbp]",
+        r"\centering",
+        r"\caption{" + caption + "}",
+        r"\label{" + label + "}",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+        r"Fold & " + header + r" \\",
+        r"\midrule",
+    ]
+    for entry in fold_entries_sorted:
+        k = entry["fold_index"]
+        per_expl = entry.get("per_explainer_summary", {})
+        vals: list[str] = []
+        for mk in metric_keys:
+            raw = [
+                s.get(block_key, {}).get(mk)
+                for s in per_expl.values()
+                if isinstance(s, dict)
+            ]
+            vals.append(_latex_num(_nanmean_safe(raw)))
+        lines.append(f"Fold {k} & " + " & ".join(vals) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines)
+
+
+def _latex_table_per_explainer_per_fold(
+    fold_entries_sorted: list[dict],
+    explainer_name: str,
+    *,
+    table_kind: str,
+    caption: str,
+    label: str,
+) -> str:
+    """LaTeX table: one explainer across folds (for index.html per-explainer section)."""
+    block_key = "valid_result_metrics" if table_kind == "valid" else "result_metrics"
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    col_spec = "l" + "r" * len(metric_keys)
+    header = " & ".join(_LATEX_METRIC_SHORT_LABELS)
+
+    lines = [
+        r"\begin{table}[htbp]",
+        r"\centering",
+        r"\caption{" + caption + "}",
+        r"\label{" + label + "}",
+        rf"\begin{{tabular}}{{{col_spec}}}",
+        r"\toprule",
+        r"Fold & " + header + r" \\",
+        r"\midrule",
+    ]
+    for entry in fold_entries_sorted:
+        k = entry["fold_index"]
+        per_expl = entry.get("per_explainer_summary", {})
+        s = per_expl.get(explainer_name, {})
+        block = s.get(block_key, {}) if isinstance(s, dict) else {}
+        vals = [_latex_num(block.get(mk) if isinstance(block, dict) else None) for mk in metric_keys]
+        lines.append(f"Fold {k} & " + " & ".join(vals) + r" \\")
+    lines += [r"\bottomrule", r"\end{tabular}", r"\end{table}"]
+    return "\n".join(lines)
+
+
+def _build_latex_block_summary_page(
+    all_explainer_names: list[str],
+    valid_vectors: dict[str, dict[str, list[float | None]]],
+    all_vectors: dict[str, dict[str, list[float | None]]],
+    fold_entries_sorted: list[dict],
+) -> str:
+    """Combine all LaTeX tables for the explainer summary page."""
+    sections: list[str] = []
+
+    sections.append("% === Mean across folds (valid) ===")
+    sections.append(_latex_table_mean_across_folds(
+        all_explainer_names, valid_vectors, table_kind="valid",
+        caption="Mean explainer metrics across folds (valid graphs only)",
+        label="tab:mean-valid",
+    ))
+    sections.append("")
+    sections.append("% === Mean across folds (all) ===")
+    sections.append(_latex_table_mean_across_folds(
+        all_explainer_names, all_vectors, table_kind="all",
+        caption="Mean explainer metrics across folds (all graphs)",
+        label="tab:mean-all",
+    ))
+    sections.append("")
+    sections.append("% === Coverage ===")
+    sections.append(_latex_table_coverage(
+        all_explainer_names, valid_vectors, all_vectors, fold_entries_sorted,
+        caption="Valid-graph coverage per explainer",
+        label="tab:coverage",
+    ))
+    sections.append("")
+    sections.append("% === Weighted stats (valid) ===")
+    sections.append(_latex_table_stats(
+        all_explainer_names, valid_vectors, "num_valid_graphs",
+        caption="Weighted statistics across folds (valid graphs)",
+        label="tab:weighted-valid",
+    ))
+    sections.append("")
+    sections.append("% === Weighted stats (all) ===")
+    sections.append(_latex_table_stats(
+        all_explainer_names, all_vectors, "num_graphs",
+        caption="Weighted statistics across folds (all graphs)",
+        label="tab:weighted-all",
+    ))
+    sections.append("")
+    sections.append("% === Unweighted stats (valid) ===")
+    sections.append(_latex_table_stats(
+        all_explainer_names, valid_vectors, None,
+        caption="Unweighted statistics across folds (valid graphs)",
+        label="tab:unweighted-valid",
+    ))
+    sections.append("")
+    sections.append("% === Unweighted stats (all) ===")
+    sections.append(_latex_table_stats(
+        all_explainer_names, all_vectors, None,
+        caption="Unweighted statistics across folds (all graphs)",
+        label="tab:unweighted-all",
+    ))
+    return "\n".join(sections)
+
+
+def _build_latex_block_index_page(
+    fold_entries_sorted: list[dict],
+    all_explainer_names: list[str],
+) -> str:
+    """Combine all LaTeX tables for the cross-fold index page."""
+    sections: list[str] = []
+
+    sections.append("% === Summary by fold (valid) ===")
+    sections.append(_latex_table_fold_summary(
+        fold_entries_sorted, table_kind="valid",
+        caption="Metrics averaged across explainers per fold (valid graphs)",
+        label="tab:fold-summary-valid",
+    ))
+    sections.append("")
+    sections.append("% === Summary by fold (all) ===")
+    sections.append(_latex_table_fold_summary(
+        fold_entries_sorted, table_kind="all",
+        caption="Metrics averaged across explainers per fold (all graphs)",
+        label="tab:fold-summary-all",
+    ))
+
+    for name in all_explainer_names:
+        safe = name.lower().replace("_", "-")
+        sections.append("")
+        sections.append(f"% === {name} (valid) ===")
+        sections.append(_latex_table_per_explainer_per_fold(
+            fold_entries_sorted, name, table_kind="valid",
+            caption=f"{_latex_escape(name)} -- valid-graph metrics per fold",
+            label=f"tab:{safe}-valid",
+        ))
+        sections.append("")
+        sections.append(f"% === {name} (all) ===")
+        sections.append(_latex_table_per_explainer_per_fold(
+            fold_entries_sorted, name, table_kind="all",
+            caption=f"{_latex_escape(name)} -- all-graph metrics per fold",
+            label=f"tab:{safe}-all",
+        ))
+    return "\n".join(sections)
+
+
+_LATEX_EXPORT_CSS = """\
+    .latex-export {
+      margin: 1.5rem 0;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 1rem 1.25rem;
+    }
+    .latex-export summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+    .latex-export pre {
+      overflow: auto;
+      max-height: 500px;
+      font-size: 0.72rem;
+      line-height: 1.35;
+      background: #0a0e14;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+      margin-top: 0.5rem;
+      white-space: pre;
+    }
+    .copy-btn {
+      margin-top: 0.5rem;
+      padding: 0.35rem 0.85rem;
+      background: var(--accent);
+      color: #000;
+      border: none;
+      border-radius: 5px;
+      font-size: 0.82rem;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .copy-btn:hover { opacity: 0.85; }
+"""
+
+_LATEX_COPY_JS = """\
+document.querySelectorAll(".copy-btn").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var pre = btn.parentElement.querySelector("pre");
+    if (!pre) return;
+    navigator.clipboard.writeText(pre.textContent).then(function () {
+      var orig = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(function () { btn.textContent = orig; }, 1500);
+    });
+  });
+});
+"""
+
+
+def _render_latex_export_block(latex_content: str, summary_text: str) -> str:
+    escaped = html.escape(latex_content)
+    return (
+        f'<details class="latex-export">'
+        f"<summary>{html.escape(summary_text)}</summary>"
+        f'<button class="copy-btn">Copy LaTeX to clipboard</button>'
+        f"<pre>{escaped}</pre>"
+        f"</details>"
+    )
+
+
 def write_explainer_summary_page(
     results_root: Path,
     fold_entries: list[dict],
@@ -1290,6 +1787,19 @@ def write_explainer_summary_page(
     mean_all_table = _build_mean_across_folds_table(
         all_explainer_names, all_vectors, table_kind="all",
     )
+    per_fold_html = _build_per_fold_sections(fold_entries_sorted, all_explainer_names)
+
+    fold_nav = " &middot; ".join(
+        f'<a href="#fold-{e["fold_index"]}">Fold {e["fold_index"]}</a>'
+        for e in fold_entries_sorted
+    )
+
+    latex_content = _build_latex_block_summary_page(
+        all_explainer_names, valid_vectors, all_vectors, fold_entries_sorted,
+    )
+    latex_block = _render_latex_export_block(
+        latex_content, "Export all tables as LaTeX",
+    )
 
     doc = f"""\
 <!DOCTYPE html>
@@ -1300,6 +1810,7 @@ def write_explainer_summary_page(
   <title>Explainer summary &mdash; across folds</title>
   <style>
 {_SUMMARY_CSS}
+{_LATEX_EXPORT_CSS}
   </style>
 </head>
 <body>
@@ -1312,7 +1823,9 @@ def write_explainer_summary_page(
       <a href="#mean-summary">Mean across folds</a> &middot;
       <a href="#coverage">Coverage</a> &middot;
       <a href="#weighted">Weighted stats</a> &middot;
-      <a href="#unweighted">Unweighted stats</a>
+      <a href="#unweighted">Unweighted stats</a> &middot;
+      <a href="#per-fold">Per-fold</a> ({fold_nav}) &middot;
+      <a href="#latex">LaTeX</a>
     </nav>
   </header>
 
@@ -1349,8 +1862,21 @@ def write_explainer_summary_page(
     {unweighted_all_table}
   </section>
 
+  <section id="per-fold">
+    <h2>Per-fold explainer metrics</h2>
+    <p class="muted">Each fold&rsquo;s explainer metrics side by side. Click column headers to sort.</p>
+    {per_fold_html}
+  </section>
+
+  <section id="latex">
+    <h2>LaTeX export</h2>
+    <p class="muted">Ready-to-paste LaTeX tables (requires <code>booktabs</code> package).</p>
+    {latex_block}
+  </section>
+
   <script>
 {_SUMMARY_JS}
+{_LATEX_COPY_JS}
   </script>
 </body>
 </html>
