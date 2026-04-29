@@ -38,6 +38,7 @@ from mprov3_explainer.preprocessing import (
     reduce_node_mask,
 )
 from mprov3_explainer.web_report import (
+    write_explainer_summary_page,
     write_fold_explanation_web_report,
     write_global_explanation_index,
 )
@@ -72,6 +73,7 @@ __all__ = [
     "edge_mask_to_node_mask",
     "normalize_mask",
     "reduce_node_mask",
+    "write_explainer_summary_page",
     "write_fold_explanation_web_report",
     "write_global_explanation_index",
 ]

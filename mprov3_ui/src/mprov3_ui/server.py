@@ -7,6 +7,7 @@ Routes
 /gine/                     mprov3_gine/results/visualizations/
 /classifications/          mprov3_gine/results/classifications/
 /explainer/                global cross-fold index (or single-fold fallback)
+/explainer/explainer_summary.html  explainer summary (primary comparative view)
 /explainer/fold_K/         per-fold root (redirects to explanation_web_report/)
 /explainer/fold_K/<path>   serves files from results/folds/fold_K/<path>
 """
@@ -78,10 +79,15 @@ def _build_landing_html(fold_indices: list[int]) -> str:
             '      <h2>Explainer Reports</h2>\n'
             f'      <p class="card-desc">Per-explainer fidelity metrics across {len(fold_indices)} fold(s).</p>\n'
             '      <div class="sub-links">\n'
-            '        <a class="sub-link" href="/explainer/">'
+            '        <a class="sub-link" href="/explainer/explainer_summary.html">'
             '<span class="sl-icon">&#128202;</span>'
-            'Cross-fold summary'
-            '<span class="sl-desc">global index</span>'
+            'Explainer summary'
+            '<span class="sl-desc">comparative view across folds</span>'
+            '</a>\n'
+            '        <a class="sub-link" href="/explainer/">'
+            '<span class="sl-icon">&#128203;</span>'
+            'Per-fold breakdown'
+            '<span class="sl-desc">detailed cross-fold index</span>'
             '</a>\n'
             f'{fold_links}\n'
             '      </div>\n'

@@ -558,6 +558,114 @@ def _nanmean_safe(values: list[float | None]) -> float | None:
     return sum(nums) / len(nums)
 
 
+# ---------------------------------------------------------------------------
+# Statistical helpers (pure-Python, no numpy -- lists are tiny)
+# ---------------------------------------------------------------------------
+
+
+def _filter_numeric_pairs(
+    values: list[float | None],
+    weights: list[float | None] | None = None,
+) -> tuple[list[float], list[float]]:
+    """Return (vals, wts) with all None / non-finite entries dropped."""
+    if weights is None:
+        weights = [1.0] * len(values)
+    out_v: list[float] = []
+    out_w: list[float] = []
+    for v, w in zip(values, weights):
+        if (
+            v is not None
+            and isinstance(v, (int, float))
+            and w is not None
+            and isinstance(w, (int, float))
+            and w > 0
+        ):
+            out_v.append(float(v))
+            out_w.append(float(w))
+    return out_v, out_w
+
+
+def _weighted_mean(values: list[float], weights: list[float]) -> float | None:
+    if not values:
+        return None
+    tw = sum(weights)
+    if tw == 0:
+        return None
+    return sum(v * w for v, w in zip(values, weights)) / tw
+
+
+def _weighted_std(values: list[float], weights: list[float]) -> float | None:
+    mu = _weighted_mean(values, weights)
+    if mu is None or len(values) < 2:
+        return None
+    tw = sum(weights)
+    var = sum(w * (v - mu) ** 2 for v, w in zip(values, weights)) / tw
+    return var ** 0.5
+
+
+def _weighted_quantile(
+    values: list[float], weights: list[float], q: float,
+) -> float | None:
+    """Weighted quantile via linear interpolation on cumulative weights."""
+    if not values:
+        return None
+    paired = sorted(zip(values, weights))
+    cum = []
+    s = 0.0
+    for _, w in paired:
+        s += w
+        cum.append(s)
+    tw = cum[-1]
+    if tw == 0:
+        return None
+    target = q * tw
+    for i, c in enumerate(cum):
+        if c >= target:
+            if i == 0:
+                return paired[0][0]
+            lo_c = cum[i - 1]
+            frac = (target - lo_c) / (c - lo_c) if c != lo_c else 0.0
+            return paired[i - 1][0] + frac * (paired[i][0] - paired[i - 1][0])
+    return paired[-1][0]
+
+
+def _weighted_median(values: list[float], weights: list[float]) -> float | None:
+    return _weighted_quantile(values, weights, 0.5)
+
+
+def _weighted_iqr(
+    values: list[float], weights: list[float],
+) -> tuple[float | None, float | None]:
+    return (
+        _weighted_quantile(values, weights, 0.25),
+        _weighted_quantile(values, weights, 0.75),
+    )
+
+
+def _unweighted_stats(
+    values: list[float | None],
+) -> tuple[float | None, float | None, float | None, float | None, float | None]:
+    """Return (median, q1, q3, mean, std) for *values*, skipping None."""
+    nums = sorted(v for v in values if v is not None and isinstance(v, (int, float)))
+    if not nums:
+        return None, None, None, None, None
+    n = len(nums)
+    mean = sum(nums) / n
+    std = (sum((x - mean) ** 2 for x in nums) / n) ** 0.5 if n > 1 else None
+
+    def _percentile(sorted_vals: list[float], p: float) -> float:
+        k = (len(sorted_vals) - 1) * p
+        lo = int(k)
+        hi = min(lo + 1, len(sorted_vals) - 1)
+        frac = k - lo
+        return sorted_vals[lo] + frac * (sorted_vals[hi] - sorted_vals[lo])
+
+    median = _percentile(nums, 0.5)
+    q1 = _percentile(nums, 0.25)
+    q3 = _percentile(nums, 0.75)
+    return median, q1, q3, mean, std
+
+
 def _global_cols(table_kind: str) -> list[tuple[str, str, str]]:
     """Columns for the cross-fold tables.
 
@@ -824,5 +932,432 @@ def write_global_explanation_index(
     out_dir = results_root / EXPLANATION_WEB_REPORT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "index.html"
+    out_path.write_text(doc, encoding="utf-8")
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Explainer summary page (primary comparative view)
+# ---------------------------------------------------------------------------
+
+_SUMMARY_CSS = """\
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4d;
+      --text: #e6edf3;
+      --muted: #8b9cb3;
+      --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      margin: 0 auto;
+      padding: 1rem 1.25rem 3rem;
+      max-width: 1400px;
+    }
+    a { color: var(--accent); }
+    header { margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: 1rem; }
+    h1 { font-size: 1.35rem; margin: 0 0 0.5rem; }
+    h2 { font-size: 1.15rem; margin-top: 2rem; border-top: 1px solid var(--border); padding-top: 1.25rem; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; }
+    h4.muted { font-size: 0.9rem; color: var(--muted); margin: 0.75rem 0 0.25rem; }
+    .muted { color: var(--muted); }
+    nav { font-size: 0.9rem; margin: 0.75rem 0; line-height: 1.6; }
+    table.summary {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin: 0.5rem 0 1rem;
+    }
+    table.summary th, table.summary td {
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.45rem;
+      text-align: left;
+      white-space: nowrap;
+    }
+    table.summary th {
+      background: var(--surface);
+      cursor: pointer;
+      user-select: none;
+    }
+    table.summary th:hover { color: var(--accent); }
+    .back-link { display: inline-block; margin-bottom: 0.75rem; font-size: 0.9rem; }
+"""
+
+_SUMMARY_JS = """\
+(function () {
+  document.querySelectorAll("table.summary").forEach(function (table) {
+    var theadRow = table.querySelector("thead tr");
+    if (!theadRow) return;
+    var sortDir = 1;
+    var sortCol = null;
+    theadRow.querySelectorAll("th").forEach(function (th, idx) {
+      th.addEventListener("click", function () {
+        var col = th.getAttribute("data-sort");
+        var type = th.getAttribute("data-type") || "text";
+        if (sortCol === col) sortDir *= -1; else { sortCol = col; sortDir = 1; }
+        var tbody = table.querySelector("tbody");
+        var rows = Array.from(tbody.querySelectorAll("tr"));
+        rows.sort(function (a, b) {
+          var ac = a.children[idx], bc = b.children[idx];
+          if (!ac || !bc) return 0;
+          var av = ac.getAttribute("data-sort-value"), bv = bc.getAttribute("data-sort-value");
+          if (type === "num" && av && bv) {
+            var an = parseFloat(av), bn = parseFloat(bv);
+            if (!isNaN(an) && !isNaN(bn)) return sortDir * (an - bn);
+          }
+          return sortDir * (ac.textContent || "").localeCompare(bc.textContent || "", undefined, { sensitivity: "base" });
+        });
+        rows.forEach(function (r) { tbody.appendChild(r); });
+      });
+    });
+  });
+})();
+"""
+
+
+def _collect_per_explainer_vectors(
+    fold_entries_sorted: list[dict],
+    all_explainer_names: list[str],
+    block_key: str,
+) -> dict[str, dict[str, list[float | None]]]:
+    """Build ``{explainer: {metric_key: [val_fold0, val_fold1, ...]}}``."""
+    vectors: dict[str, dict[str, list[float | None]]] = {}
+    for name in all_explainer_names:
+        vecs: dict[str, list[float | None]] = {}
+        for entry in fold_entries_sorted:
+            per_expl = entry.get("per_explainer_summary", {})
+            s = per_expl.get(name, {})
+            block = s.get(block_key, {}) if isinstance(s, dict) else {}
+            for mkey, _ in _METRIC_COLUMNS:
+                full_key = f"mean_{mkey}"
+                vecs.setdefault(full_key, []).append(
+                    block.get(full_key) if isinstance(block, dict) else None,
+                )
+            for extra_key in ("num_valid_graphs", "num_graphs", "wall_time_s"):
+                vecs.setdefault(extra_key, []).append(
+                    block.get(extra_key) if isinstance(block, dict) else None,
+                )
+        vectors[name] = vecs
+    return vectors
+
+
+def _build_weighted_table(
+    all_explainer_names: list[str],
+    vectors: dict[str, dict[str, list[float | None]]],
+    weight_key: str,
+) -> str:
+    """One table: weighted median, IQR, mean, std per metric per explainer."""
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    metric_labels = [label for _, label in _METRIC_COLUMNS]
+
+    sub_cols: list[str] = ["Median", "Q1", "Q3", "Mean", "Std"]
+    header_cells = ['<th data-sort="explainer" data-type="text">Explainer</th>']
+    for label in metric_labels:
+        for sc in sub_cols:
+            col_id = f"{label}_{sc}".replace(" ", "_")
+            header_cells.append(
+                f'<th data-sort="{html.escape(col_id)}" data-type="num">'
+                f"{html.escape(label)}<br><small>{html.escape(sc)}</small></th>"
+            )
+    thead = "<tr>" + "".join(header_cells) + "</tr>"
+
+    tbody_rows: list[str] = []
+    for name in all_explainer_names:
+        vecs = vectors[name]
+        wts_raw = vecs.get(weight_key, [])
+        cells = [f"<td>{html.escape(name)}</td>"]
+        for mk in metric_keys:
+            vals_raw = vecs.get(mk, [])
+            vals, wts = _filter_numeric_pairs(vals_raw, wts_raw)
+            med = _weighted_median(vals, wts)
+            q1, q3 = _weighted_iqr(vals, wts)
+            mean = _weighted_mean(vals, wts)
+            std = _weighted_std(vals, wts)
+            for stat in (med, q1, q3, mean, std):
+                sv = _sort_value(stat, "num")
+                cells.append(
+                    f'<td data-sort-value="{sv}">{_fmt_num(stat)}</td>'
+                )
+        tbody_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    tbody = "\n".join(tbody_rows) if tbody_rows else '<tr><td colspan="1">No data</td></tr>'
+    return (
+        f'<table class="summary"><thead>{thead}</thead>'
+        f"<tbody>{tbody}</tbody></table>"
+    )
+
+
+def _build_unweighted_table(
+    all_explainer_names: list[str],
+    vectors: dict[str, dict[str, list[float | None]]],
+) -> str:
+    """One table: unweighted median, IQR, mean, std per metric per explainer."""
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    metric_labels = [label for _, label in _METRIC_COLUMNS]
+
+    sub_cols: list[str] = ["Median", "Q1", "Q3", "Mean", "Std"]
+    header_cells = ['<th data-sort="explainer" data-type="text">Explainer</th>']
+    for label in metric_labels:
+        for sc in sub_cols:
+            col_id = f"{label}_{sc}".replace(" ", "_")
+            header_cells.append(
+                f'<th data-sort="{html.escape(col_id)}" data-type="num">'
+                f"{html.escape(label)}<br><small>{html.escape(sc)}</small></th>"
+            )
+    thead = "<tr>" + "".join(header_cells) + "</tr>"
+
+    tbody_rows: list[str] = []
+    for name in all_explainer_names:
+        vecs = vectors[name]
+        cells = [f"<td>{html.escape(name)}</td>"]
+        for mk in metric_keys:
+            vals_raw = vecs.get(mk, [])
+            med, q1, q3, mean, std = _unweighted_stats(vals_raw)
+            for stat in (med, q1, q3, mean, std):
+                sv = _sort_value(stat, "num")
+                cells.append(
+                    f'<td data-sort-value="{sv}">{_fmt_num(stat)}</td>'
+                )
+        tbody_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    tbody = "\n".join(tbody_rows) if tbody_rows else '<tr><td colspan="1">No data</td></tr>'
+    return (
+        f'<table class="summary"><thead>{thead}</thead>'
+        f"<tbody>{tbody}</tbody></table>"
+    )
+
+
+def _build_coverage_table(
+    all_explainer_names: list[str],
+    valid_vectors: dict[str, dict[str, list[float | None]]],
+    all_vectors: dict[str, dict[str, list[float | None]]],
+    fold_entries_sorted: list[dict],
+) -> str:
+    """Valid-graph coverage table: total valid / total graphs + per-fold."""
+    fold_indices = [e["fold_index"] for e in fold_entries_sorted]
+
+    header_cells = [
+        '<th data-sort="explainer" data-type="text">Explainer</th>',
+        '<th data-sort="total_valid" data-type="num">Valid</th>',
+        '<th data-sort="total_graphs" data-type="num">Total</th>',
+        '<th data-sort="coverage_pct" data-type="num">Coverage %</th>',
+    ]
+    for k in fold_indices:
+        header_cells.append(
+            f'<th data-sort="fold_{k}" data-type="num">Fold {k}</th>'
+        )
+    thead = "<tr>" + "".join(header_cells) + "</tr>"
+
+    tbody_rows: list[str] = []
+    for name in all_explainer_names:
+        v_valid = valid_vectors[name].get("num_valid_graphs", [])
+        v_total = all_vectors[name].get("num_graphs", [])
+        total_valid = sum(x for x in v_valid if x is not None and isinstance(x, (int, float)))
+        total_graphs = sum(x for x in v_total if x is not None and isinstance(x, (int, float)))
+        pct = (total_valid / total_graphs * 100) if total_graphs > 0 else None
+
+        cells = [
+            f"<td>{html.escape(name)}</td>",
+            f'<td data-sort-value="{_sort_value(total_valid, "num")}">{_fmt_num(total_valid)}</td>',
+            f'<td data-sort-value="{_sort_value(total_graphs, "num")}">{_fmt_num(total_graphs)}</td>',
+            f'<td data-sort-value="{_sort_value(pct, "num")}">{_fmt_num(round(pct, 1) if pct is not None else None)}</td>',
+        ]
+        for vv, vt in zip(v_valid, v_total):
+            vv_n = vv if vv is not None and isinstance(vv, (int, float)) else 0
+            vt_n = vt if vt is not None and isinstance(vt, (int, float)) else 0
+            label = f"{int(vv_n)}/{int(vt_n)}" if vt_n > 0 else "\u2014"
+            fold_pct = vv_n / vt_n * 100 if vt_n > 0 else None
+            cells.append(
+                f'<td data-sort-value="{_sort_value(fold_pct, "num")}">{label}</td>'
+            )
+        tbody_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    tbody = "\n".join(tbody_rows) if tbody_rows else '<tr><td colspan="1">No data</td></tr>'
+    return (
+        f'<table class="summary"><thead><tr>{"".join(header_cells)}</tr></thead>'
+        f"<tbody>{tbody}</tbody></table>"
+    )
+
+
+def _build_mean_across_folds_table(
+    all_explainer_names: list[str],
+    vectors: dict[str, dict[str, list[float | None]]],
+    *,
+    table_kind: str,
+) -> str:
+    """Compact table: one row per explainer, nanmean of each metric across folds."""
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    metric_labels = [label for _, label in _METRIC_COLUMNS]
+
+    header_cells = ['<th data-sort="explainer" data-type="text">Explainer</th>']
+    if table_kind == "valid":
+        header_cells.append('<th data-sort="num_valid_graphs" data-type="num">Valid graphs (total)</th>')
+    else:
+        header_cells.append('<th data-sort="wall_time_s" data-type="num">Wall (s) total</th>')
+        header_cells.append('<th data-sort="num_graphs" data-type="num">Graphs (total)</th>')
+    for label in metric_labels:
+        col_id = label.replace(" ", "_")
+        header_cells.append(
+            f'<th data-sort="{html.escape(col_id)}" data-type="num">{html.escape(label)}</th>'
+        )
+    thead = "<tr>" + "".join(header_cells) + "</tr>"
+
+    tbody_rows: list[str] = []
+    for name in all_explainer_names:
+        vecs = vectors[name]
+        cells = [f"<td>{html.escape(name)}</td>"]
+        if table_kind == "valid":
+            total = sum(
+                x for x in vecs.get("num_valid_graphs", [])
+                if x is not None and isinstance(x, (int, float))
+            )
+            cells.append(f'<td data-sort-value="{_sort_value(total, "num")}">{_fmt_num(total)}</td>')
+        else:
+            total_time = sum(
+                x for x in vecs.get("wall_time_s", [])
+                if x is not None and isinstance(x, (int, float))
+            )
+            total_g = sum(
+                x for x in vecs.get("num_graphs", [])
+                if x is not None and isinstance(x, (int, float))
+            )
+            cells.append(f'<td data-sort-value="{_sort_value(total_time, "num")}">{_fmt_num(round(total_time, 1))}</td>')
+            cells.append(f'<td data-sort-value="{_sort_value(total_g, "num")}">{_fmt_num(total_g)}</td>')
+
+        for mk in metric_keys:
+            val = _nanmean_safe(vecs.get(mk, []))
+            sv = _sort_value(val, "num")
+            cells.append(f'<td data-sort-value="{sv}">{_fmt_num(val)}</td>')
+        tbody_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    tbody = "\n".join(tbody_rows) if tbody_rows else '<tr><td colspan="1">No data</td></tr>'
+    return (
+        f'<table class="summary"><thead><tr>{"".join(header_cells)}</tr></thead>'
+        f"<tbody>{tbody}</tbody></table>"
+    )
+
+
+def write_explainer_summary_page(
+    results_root: Path,
+    fold_entries: list[dict],
+) -> Path:
+    """Write ``results_root/explanation_web_report/explainer_summary.html``.
+
+    Primary comparative view: one row per explainer with weighted/unweighted
+    statistics across folds, valid-graph coverage, and a compact mean table.
+    """
+    gen_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    fold_entries_sorted = sorted(fold_entries, key=lambda e: e["fold_index"])
+
+    all_explainer_names: list[str] = []
+    seen: set[str] = set()
+    for entry in fold_entries_sorted:
+        for name in entry.get("explainer_names", []):
+            if name not in seen:
+                seen.add(name)
+                all_explainer_names.append(name)
+
+    valid_vectors = _collect_per_explainer_vectors(
+        fold_entries_sorted, all_explainer_names, "valid_result_metrics",
+    )
+    all_vectors = _collect_per_explainer_vectors(
+        fold_entries_sorted, all_explainer_names, "result_metrics",
+    )
+
+    weighted_valid_table = _build_weighted_table(
+        all_explainer_names, valid_vectors, "num_valid_graphs",
+    )
+    weighted_all_table = _build_weighted_table(
+        all_explainer_names, all_vectors, "num_graphs",
+    )
+    unweighted_valid_table = _build_unweighted_table(
+        all_explainer_names, valid_vectors,
+    )
+    unweighted_all_table = _build_unweighted_table(
+        all_explainer_names, all_vectors,
+    )
+    coverage_table = _build_coverage_table(
+        all_explainer_names, valid_vectors, all_vectors, fold_entries_sorted,
+    )
+    mean_valid_table = _build_mean_across_folds_table(
+        all_explainer_names, valid_vectors, table_kind="valid",
+    )
+    mean_all_table = _build_mean_across_folds_table(
+        all_explainer_names, all_vectors, table_kind="all",
+    )
+
+    doc = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Explainer summary &mdash; across folds</title>
+  <style>
+{_SUMMARY_CSS}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Summary by explainer (across folds)</h1>
+    <p class="muted">{len(fold_entries_sorted)} fold(s) &middot; {len(all_explainer_names)} explainer(s) &middot; HTML generated <code>{html.escape(gen_at)}</code></p>
+    <a class="back-link" href="index.html">&larr; Detailed per-fold breakdown</a>
+    <nav>
+      <strong>Jump:</strong>
+      <a href="#mean-summary">Mean across folds</a> &middot;
+      <a href="#coverage">Coverage</a> &middot;
+      <a href="#weighted">Weighted stats</a> &middot;
+      <a href="#unweighted">Unweighted stats</a>
+    </nav>
+  </header>
+
+  <section id="mean-summary">
+    <h2>Mean across folds</h2>
+    <p class="muted">Simple mean of each metric across folds, per explainer. Each fold counts equally.</p>
+    <h4 class="muted">Valid result metrics</h4>
+    {mean_valid_table}
+    <h4 class="muted">Result metrics</h4>
+    {mean_all_table}
+  </section>
+
+  <section id="coverage">
+    <h2>Valid-graph coverage</h2>
+    <p class="muted">Total valid graphs / total graphs per explainer, with per-fold breakdown.</p>
+    {coverage_table}
+  </section>
+
+  <section id="weighted">
+    <h2>Weighted statistics across folds</h2>
+    <p class="muted">Weighted by <code>num_valid_graphs</code> (valid table) or <code>num_graphs</code> (all table). Median, IQR (Q1&ndash;Q3), mean, and std.</p>
+    <h4 class="muted">Valid result metrics</h4>
+    {weighted_valid_table}
+    <h4 class="muted">Result metrics</h4>
+    {weighted_all_table}
+  </section>
+
+  <section id="unweighted">
+    <h2>Unweighted statistics across folds</h2>
+    <p class="muted">Each fold counts equally. Median, IQR (Q1&ndash;Q3), mean, and std.</p>
+    <h4 class="muted">Valid result metrics</h4>
+    {unweighted_valid_table}
+    <h4 class="muted">Result metrics</h4>
+    {unweighted_all_table}
+  </section>
+
+  <script>
+{_SUMMARY_JS}
+  </script>
+</body>
+</html>
+"""
+
+    out_dir = results_root / EXPLANATION_WEB_REPORT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "explainer_summary.html"
     out_path.write_text(doc, encoding="utf-8")
     return out_path

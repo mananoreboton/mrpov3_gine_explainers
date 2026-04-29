@@ -20,7 +20,15 @@ Per-fold artifacts live under
 
 A multi-fold global index is written to
 `results/explanation_web_report/index.html` whenever more than one fold is
-processed in a single visualization run.
+processed in a single visualization run. Alongside it, an **explainer
+summary page** is written to
+`results/explanation_web_report/explainer_summary.html` — this is the
+primary comparative view with one row per explainer containing:
+
+- **Mean across folds** (valid and all-graph variants),
+- **Valid-graph coverage** (total valid / total graphs, per-fold breakdown),
+- **Weighted statistics** (median, IQR, mean, std weighted by graph count),
+- **Unweighted statistics** (each fold counts equally).
 
 Re-running the explanation script overwrites any existing per-explainer
 output after an `[INFO] Output exists; overwriting under: …` line.
@@ -198,7 +206,8 @@ The per-fold HTML report renders the two metric tables side by side
 (`Valid result metrics` and `Result metrics`), one row per explainer, and
 embeds every per-graph mask JSON / PNG underneath. When more than one fold
 is processed, a global cross-fold index is written to
-`results/explanation_web_report/index.html`.
+`results/explanation_web_report/index.html` and the explainer summary to
+`results/explanation_web_report/explainer_summary.html`.
 
 ```bash
 uv run python scripts/generate_visualizations.py

@@ -42,6 +42,7 @@ from mprov3_gine_explainer_defaults import (
 from mprov3_explainer import AVAILABLE_EXPLAINERS, validate_explainer, visualizations_run_dir
 from mprov3_explainer.visualize import draw_molecule_with_mask
 from mprov3_explainer.web_report import (
+    write_explainer_summary_page,
     write_fold_explanation_web_report,
     write_global_explanation_index,
 )
@@ -257,6 +258,8 @@ def main() -> None:
     if fold_entries and len(target_folds) > 1:
         global_html = write_global_explanation_index(results_root, fold_entries)
         print(f"Global index written: {global_html}", flush=True)
+        summary_html = write_explainer_summary_page(results_root, fold_entries)
+        print(f"Explainer summary written: {summary_html}", flush=True)
 
 
 if __name__ == "__main__":
