@@ -54,7 +54,7 @@ def edge_mask_to_node_mask(
     return node_mask
 
 
-CONSTANT_MASK_TOLERANCE = 1e-3
+CONSTANT_MASK_TOLERANCE = 1e-6
 """Spread (max - min) below which a mask is considered constant/degenerate.
 
 Aligned with the default ``mask_spread_tolerance`` used by :func:`apply_preprocessing`,

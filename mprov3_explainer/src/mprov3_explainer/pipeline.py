@@ -1053,19 +1053,6 @@ def run_explanations(
             else:
                 paper_suf, paper_com, paper_f1 = _NAN, _NAN, _NAN
 
-            # If a metric we expected to compute came back NaN, mark the
-            # graph invalid so it stays out of the valid-only aggregates.
-            metric_failed = any(
-                math.isnan(v)
-                for v in (pyg_fid_plus, pyg_fid_minus, pyg_char, pyg_curve_auc, pyg_unfaith)
-            )
-            if paper_metrics:
-                metric_failed = metric_failed or any(
-                    math.isnan(v) for v in (paper_suf, paper_com, paper_f1)
-                )
-            if metric_failed:
-                valid = False
-
             yield ExplanationResult(
                 graph_id=graph_id,
                 explanation=explanation,

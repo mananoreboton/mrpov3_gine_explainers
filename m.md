@@ -17,7 +17,7 @@ metric appears under both aggregate tables in `explanation_report.json`:
 | `pyg_characterization_score` | PyG `characterization_score(Fid+, Fid-)` with default `pos/neg_weight=0.5`. | No | Yes |
 | `pyg_fidelity_curve_auc` | PyG `fidelity_curve_auc` over a per-graph top-k sparsity sweep `(0.1, 0.2, …, 0.9)`. | No | Yes |
 | `pyg_unfaithfulness` | PyG `unfaithfulness` (graph explanation faithfulness, GEF). | No | Yes |
-| `valid` | True iff every metric above is finite, the prediction is correct, and the mask passes the degenerate-mask filter. Used to populate `valid_result_metrics`. | – | – |
+| `valid` | True iff the prediction is correct and the mask passes the degenerate-mask filter. Used to populate `valid_result_metrics`. | – | – |
 | `elapsed_s` | Wall-clock seconds the explainer's forward call took for this graph. | – | – |
 
 The remaining per-graph fields (`correct_class`, `pred_class`, `target_class`,

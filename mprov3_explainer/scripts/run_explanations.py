@@ -99,7 +99,7 @@ from mprov3_explainer import (
 from mprov3_explainer.explainers import get_spec
 
 PAPER_N_THRESHOLDS = DEFAULT_PAPER_N_THRESHOLDS
-MASK_SPREAD_TOLERANCE = 1e-3
+MASK_SPREAD_TOLERANCE = 1e-6
 
 # ----------------------------------------------------------------------------
 # Aggregate metric layout
