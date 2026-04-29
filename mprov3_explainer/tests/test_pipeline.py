@@ -9,17 +9,16 @@ import torch
 from torch_geometric.explain import Explanation
 
 from mprov3_explainer.pipeline import (
-    DEFAULT_TOP_K_FRACTION,
+    DEFAULT_FIDELITY_CURVE_TOP_K,
+    DEFAULT_PAPER_N_THRESHOLDS,
+    ExplanationResult,
     _binarize_explanation_top_k,
     _clamp_unit,
-    _mask_entropy,
-    _mask_entropy_normalized,
     _paper_f1_fidelity,
     _paper_metrics_from_edge_mask,
     _paper_metrics_from_masks,
     _paper_sufficiency_and_comprehensiveness,
     _percentile_keep_fractions,
-    aggregate_fidelity,
     diagnose_explanation_run,
     nanmean,
 )
@@ -50,8 +49,6 @@ def test_paper_f1_fidelity_propagates_nan():
 
 
 def test_paper_f1_fidelity_matches_paper_formula():
-    # When inputs are already in [0, 1] the result should equal
-    # 2 * (1 - Fsuf) * Fcom / ((1 - Fsuf) + Fcom)
     Fsuf, Fcom = 0.3, 0.4
     expected = 2.0 * (1.0 - Fsuf) * Fcom / ((1.0 - Fsuf) + Fcom)
     assert math.isclose(_paper_f1_fidelity(Fsuf, Fcom), expected)
@@ -65,7 +62,8 @@ def test_clamp_unit_preserves_nan():
 
 
 # ---------------------------------------------------------------------------
-# Top-k binarization on Explanation objects
+# Top-k binarization on Explanation objects (used internally by the
+# fidelity-curve sweep)
 # ---------------------------------------------------------------------------
 
 
@@ -97,7 +95,6 @@ class _ConstModel(torch.nn.Module):
         self.bias = torch.nn.Parameter(torch.tensor([0.7, 0.3]), requires_grad=False)
 
     def forward(self, x, edge_index, batch=None, edge_attr=None):
-        # One row per graph in the batch
         if batch is None:
             return self.bias.unsqueeze(0)
         n_graphs = int(batch.max().item()) + 1 if batch.numel() else 1
@@ -113,13 +110,6 @@ def test_percentile_keep_fractions_descends_from_almost_one_to_almost_zero():
 
 
 def test_node_native_sweep_is_zero_for_constant_model():
-    """A model that returns a constant prediction has Fsuf=Fcom=0 because the
-    explanation/complement subgraphs do not change the output.
-
-    We use a graph with enough nodes that no keep-fraction in the percentile
-    sweep collapses the complement to an empty set (which would short-circuit
-    ``comp_prob`` to 0 and bias the sufficiency curve).
-    """
     n = 20
     x = torch.eye(n)
     src = torch.arange(n, dtype=torch.long)
@@ -169,7 +159,6 @@ def test_paper_metrics_dispatches_to_edge_native_for_edge_only_explanation():
         target_class=0,
         n_thresholds=20,
     )
-    # All values should be finite (edge-native sweep ran successfully)
     assert not math.isnan(Fsuf)
     assert not math.isnan(Fcom)
     assert 0.0 <= Ff1 <= 1.0 or math.isnan(Ff1)
@@ -191,74 +180,55 @@ def test_nanmean_skips_none():
     assert math.isclose(nanmean([1.0, None, 3.0]), 2.0)
 
 
-def test_aggregate_fidelity_nan_skip_default():
-    """Mock results with mixed NaN/finite fidelities."""
-    from mprov3_explainer.pipeline import ExplanationResult
-
-    def make(fp, fm, valid=True):
-        return ExplanationResult(
-            graph_id="g",
-            explanation=Explanation(),
-            fidelity_fid_plus=fp,
-            fidelity_fid_minus=fm,
-            valid=valid,
-        )
-
-    rs = [
-        make(0.4, 0.1),
-        make(float("nan"), float("nan"), valid=False),
-        make(0.6, 0.3),
-    ]
-    mp, mm = aggregate_fidelity(rs, valid_only=False, nan_skip=True)
-    assert math.isclose(mp, 0.5)
-    assert math.isclose(mm, 0.2)
-    # valid_only further filters out the NaN graph
-    mp2, mm2 = aggregate_fidelity(rs, valid_only=True, nan_skip=True)
-    assert math.isclose(mp2, 0.5)
-    assert math.isclose(mm2, 0.2)
+# ---------------------------------------------------------------------------
+# Run diagnostics
+# ---------------------------------------------------------------------------
 
 
-def test_aggregate_fidelity_returns_nan_for_empty_input():
-    plus, minus = aggregate_fidelity([], valid_only=False)
-    assert math.isnan(plus)
-    assert math.isnan(minus)
-
-
-def test_diagnose_explanation_run_marks_all_degenerate_failure():
-    from mprov3_explainer.pipeline import ExplanationResult
-
+def test_diagnose_explanation_run_marks_no_valid_failure():
     results = [
         ExplanationResult(
             graph_id=f"g{i}",
             explanation=Explanation(),
             valid=False,
-            mask_spread=0.0,
         )
         for i in range(3)
     ]
+    status, note = diagnose_explanation_run(results)
+    assert status == "failed_no_valid_metrics"
+    assert "valid-only aggregates" in note
 
-    status, note = diagnose_explanation_run(results, mask_spread_tolerance=1e-3)
 
-    assert status == "failed_all_degenerate_masks"
-    assert "headline metrics" in note
+def test_diagnose_explanation_run_marks_partial_invalid():
+    results = [
+        ExplanationResult(graph_id="g0", explanation=Explanation(), valid=True),
+        ExplanationResult(graph_id="g1", explanation=Explanation(), valid=False),
+    ]
+    status, note = diagnose_explanation_run(results)
+    assert status == "partial_invalid"
+    assert "1 of 2" in note
+
+
+def test_diagnose_explanation_run_marks_ok_when_all_valid():
+    results = [
+        ExplanationResult(graph_id=f"g{i}", explanation=Explanation(), valid=True)
+        for i in range(2)
+    ]
+    status, _ = diagnose_explanation_run(results)
+    assert status == "ok"
 
 
 # ---------------------------------------------------------------------------
-# Default top-k fraction
+# Defaults
 # ---------------------------------------------------------------------------
 
 
-def test_default_top_k_fraction_is_graphframex_canonical():
-    """GraphFramEx (Amara et al., 2022) uses k=0.2 by default."""
-    assert DEFAULT_TOP_K_FRACTION == pytest.approx(0.2)
+def test_default_paper_n_thresholds_is_100():
+    assert DEFAULT_PAPER_N_THRESHOLDS == 100
 
 
-def test_mask_entropy_normalized_removes_mask_size_scale():
-    uniform_small = torch.ones(4)
-    uniform_large = torch.ones(16)
-    point_mass = torch.tensor([1.0, 0.0, 0.0, 0.0])
-
-    assert _mask_entropy(uniform_large) > _mask_entropy(uniform_small)
-    assert _mask_entropy_normalized(uniform_small) == pytest.approx(1.0)
-    assert _mask_entropy_normalized(uniform_large) == pytest.approx(1.0)
-    assert _mask_entropy_normalized(point_mass) == pytest.approx(0.0)
+def test_default_fidelity_curve_top_k_is_sorted_ascending():
+    grid = list(DEFAULT_FIDELITY_CURVE_TOP_K)
+    assert grid == sorted(grid)
+    assert all(0.0 < k < 1.0 for k in grid)
+    assert len(grid) >= 3

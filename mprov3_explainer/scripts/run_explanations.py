@@ -1,10 +1,25 @@
 #!/usr/bin/env python3
 """
-Run all explainers on trained GINE fold(s). By default the single best CV fold is chosen
-(from classify.py or train.py summaries), but ``--folds`` lets you run on an explicit list.
+Run all explainers on trained GINE fold(s) and write metric reports.
 
-Writes per-explainer reports under ``results/folds/fold_<k>/explanations/`` and
-``comparison_report.json`` (no HTML) for each fold.
+For every (fold, explainer) the script writes
+``results/folds/fold_<k>/explanations/<EXPLAINER>/explanation_report.json``
+containing two aggregate tables computed from the same per-graph metric set:
+
+* ``valid_result_metrics``: aggregated **only over graphs that produced a
+  complete metric set** (``valid == True``).
+* ``result_metrics``: aggregated over **every explained graph** in the fold,
+  with NaN-aware means so failed graphs do not bias the aggregate.
+
+Both tables expose the Longa et al. (2025) paper metrics (``Fsuf``,
+``Fcom``, ``Ff1``) and the PyG metrics from
+:mod:`torch_geometric.explain.metric` (``fidelity``, ``characterization_score``,
+``fidelity_curve_auc``, ``unfaithfulness``) as PyG generates them. The
+``result_metrics`` table also carries ``wall_time_s`` and the total
+``num_graphs``.
+
+A cross-explainer ``comparison_report.json`` is written under
+``results/folds/fold_<k>/explanations/`` for each fold.
 
 Usage:
   uv run python scripts/run_explanations.py
@@ -12,9 +27,6 @@ Usage:
   uv run python scripts/run_explanations.py --fold_metric train_accuracy
   uv run python scripts/run_explanations.py --folds 0 2 4
   uv run python scripts/run_explanations.py --no_mask_spread_filter
-
-GNN results are read from ``mprov3_gine/results`` and the MPro snapshot from the workspace
-default directory (see ``DEFAULT_MPRO_SNAPSHOT_DIR_NAME`` in mprov3_gine_explainer_defaults).
 """
 
 from __future__ import annotations
@@ -71,27 +83,42 @@ from mprov3_gine_explainer_defaults import (
 
 from mprov3_explainer import (
     AVAILABLE_EXPLAINERS,
+    DEFAULT_PAPER_N_THRESHOLDS,
     ExplanationResult,
     PredictionBaselineEntry,
-    aggregate_fidelity,
     collect_prediction_baseline,
     diagnose_explanation_run,
     dumps_strict_json,
     explanations_run_dir,
     get_device,
+    nanmean,
     resolve_dataset_dir,
     run_explanations,
     validate_explainer,
 )
 from mprov3_explainer.explainers import get_spec
-from mprov3_explainer.pipeline import (
-    DEFAULT_PAPER_N_THRESHOLDS,
-    DEFAULT_TOP_K_FRACTION,
-    nanmean,
-)
 
 PAPER_N_THRESHOLDS = DEFAULT_PAPER_N_THRESHOLDS
 MASK_SPREAD_TOLERANCE = 1e-3
+
+# ----------------------------------------------------------------------------
+# Aggregate metric layout
+# ----------------------------------------------------------------------------
+
+#: Per-graph fields (and their report keys) used to build both aggregate tables.
+#: Order is preserved end-to-end: per-graph entries, in-progress logging, the
+#: ``valid_result_metrics`` / ``result_metrics`` blocks of the JSON report and
+#: the HTML report tables all iterate over this same sequence.
+_METRIC_FIELDS: tuple[tuple[str, str], ...] = (
+    ("paper_sufficiency", "Fsuf"),
+    ("paper_comprehensiveness", "Fcom"),
+    ("paper_f1_fidelity", "Ff1"),
+    ("pyg_fidelity_plus", "Fid+"),
+    ("pyg_fidelity_minus", "Fid-"),
+    ("pyg_characterization_score", "char"),
+    ("pyg_fidelity_curve_auc", "AUC"),
+    ("pyg_unfaithfulness", "GEF"),
+)
 
 
 @dataclass
@@ -117,12 +144,18 @@ class ExplanationRunContext:
     apply_mask_spread_filter: bool
 
 
+# ----------------------------------------------------------------------------
+# CLI / context
+# ----------------------------------------------------------------------------
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run all explainers on the best fold (test accuracy from classify.py by default). "
-            "Uses mprov3_gine/results and the default MPro snapshot path; "
-            "PGExplainer still trains on the train split, then explains the split from --split."
+            "Run all explainers on the best fold (test accuracy from classify.py "
+            "by default). Uses mprov3_gine/results and the default MPro snapshot "
+            "path; PGExplainer still trains on the train split, then explains "
+            "the split from --split."
         ),
     )
     parser.add_argument(
@@ -161,15 +194,6 @@ def parse_args() -> argparse.Namespace:
         help=(
             f"RNG seed for torch / numpy / random / PyG (default: {DEFAULT_SEED}). "
             "Pin to make PGExplainer / PGMExplainer / IG runs reproducible."
-        ),
-    )
-    parser.add_argument(
-        "--top_k_fraction",
-        type=float,
-        default=DEFAULT_TOP_K_FRACTION,
-        help=(
-            "Fraction of top-ranked entries kept by the GraphFramEx-style "
-            f"top-k binarized fidelity (default: {DEFAULT_TOP_K_FRACTION})."
         ),
     )
     return parser.parse_args()
@@ -286,7 +310,7 @@ def build_explanation_run_context_for_fold(
 
 
 def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunContext:
-    """Resolve paths, loaders, best fold, and trained GNN (configuration for all explainers)."""
+    """Resolve paths, loaders, best fold and trained GNN."""
     results_root = _GNN_PROJECT_ROOT / RESULTS_DIR_NAME
     if not results_root.exists():
         raise FileNotFoundError(f"Results root not found: {results_root}")
@@ -300,41 +324,115 @@ def build_explanation_run_context(args: argparse.Namespace) -> ExplanationRunCon
     return build_explanation_run_context_for_fold(args, k, num_folds)
 
 
+# ----------------------------------------------------------------------------
+# Per-graph -> dict + aggregation helpers
+# ----------------------------------------------------------------------------
+
+
 def _fmt(x: float) -> str:
     """Pretty-print a float that may be NaN."""
     return "nan" if isinstance(x, float) and math.isnan(x) else f"{x:.4f}"
 
 
-def run_one_explainer(
+def _per_graph_entry(r: ExplanationResult) -> dict:
+    """Convert one :class:`ExplanationResult` into the JSON-serialisable shape."""
+    entry: dict[str, Any] = {"graph_id": r.graph_id, "valid": bool(r.valid)}
+    for field, _ in _METRIC_FIELDS:
+        entry[field] = float(getattr(r, field))
+    entry.update({
+        "correct_class": bool(r.correct_class),
+        "pred_class": int(r.pred_class),
+        "target_class": int(r.target_class),
+        "prediction_baseline_mismatch": bool(r.prediction_baseline_mismatch),
+        "has_node_mask": bool(r.has_node_mask),
+        "has_edge_mask": bool(r.has_edge_mask),
+        "elapsed_s": float(r.elapsed_s),
+    })
+    return entry
+
+
+def _aggregate_metrics(results: list[ExplanationResult]) -> dict[str, float]:
+    """NaN-aware mean of every metric in :data:`_METRIC_FIELDS` over *results*."""
+    return {
+        f"mean_{field}": nanmean([float(getattr(r, field)) for r in results])
+        for field, _ in _METRIC_FIELDS
+    }
+
+
+def _build_valid_result_metrics(results: list[ExplanationResult]) -> dict[str, Any]:
+    """Aggregate metrics over the subset of *results* with ``valid == True``."""
+    valid = [r for r in results if r.valid]
+    return {
+        "num_valid_graphs": len(valid),
+        **_aggregate_metrics(valid),
+    }
+
+
+def _build_result_metrics(
+    results: list[ExplanationResult],
+    *,
+    wall_time_s: float,
+) -> dict[str, Any]:
+    """Aggregate metrics over **every** graph in the fold, plus runtime / count."""
+    return {
+        "wall_time_s": float(wall_time_s),
+        "num_graphs": len(results),
+        **_aggregate_metrics(results),
+    }
+
+
+def _print_metric_block(label: str, block: dict[str, Any]) -> None:
+    """Compact one-line summary of a metric table."""
+    parts: list[str] = []
+    for field, short in _METRIC_FIELDS:
+        parts.append(f"{short}={_fmt(block[f'mean_{field}'])}")
+    extra_keys = [k for k in ("wall_time_s", "num_graphs", "num_valid_graphs") if k in block]
+    extras = " ".join(
+        f"{k}={block[k]:.1f}" if isinstance(block[k], float) else f"{k}={block[k]}"
+        for k in extra_keys
+    )
+    print(f"  {label}: {extras} | " + " ".join(parts), flush=True)
+
+
+# ----------------------------------------------------------------------------
+# Core explainer driver
+# ----------------------------------------------------------------------------
+
+
+def _explainer_kwargs(explainer_name: str, num_classes: int) -> tuple[dict, int]:
+    """Return (forward kwargs, builder epochs) tuned per explainer."""
+    kwargs: dict[str, Any] = {"num_classes": num_classes}
+    if explainer_name in ("IGNODE", "IGEDGE"):
+        kwargs["n_steps"] = DEFAULT_IG_N_STEPS
+    if explainer_name == "PGMEXPL":
+        kwargs["num_samples"] = DEFAULT_PGM_NUM_SAMPLES
+    epochs = (
+        DEFAULT_PG_EXPLAINER_EPOCHS
+        if explainer_name == "PGEXPL"
+        else DEFAULT_GNN_EXPLAINER_EPOCHS
+    )
+    return kwargs, epochs
+
+
+def _explain_all_graphs(
     ctx: ExplanationRunContext,
     explainer_name: str,
     *,
-    top_k_fraction: float = DEFAULT_TOP_K_FRACTION,
-    seed: int = DEFAULT_SEED,
-    prediction_baseline: dict[str, PredictionBaselineEntry] | None = None,
-) -> tuple[dict, list[dict]]:
-    """Drive pipeline for one explainer: explain → metrics → per-graph JSON + report dict."""
+    prediction_baseline: dict[str, PredictionBaselineEntry] | None,
+) -> tuple[list[ExplanationResult], float]:
+    """Run *explainer_name* over the explain loader; return (results, wall_time_s)."""
     spec = get_spec(explainer_name)
-
-    explainer_kwargs: dict = {"num_classes": ctx.num_classes}
-    if explainer_name in ("IGNODE", "IGEDGE"):
-        explainer_kwargs["n_steps"] = DEFAULT_IG_N_STEPS
-    if explainer_name == "PGMEXPL":
-        explainer_kwargs["num_samples"] = DEFAULT_PGM_NUM_SAMPLES
-
-    epochs_for_builder = DEFAULT_GNN_EXPLAINER_EPOCHS
-    if explainer_name == "PGEXPL":
-        epochs_for_builder = DEFAULT_PG_EXPLAINER_EPOCHS
+    explainer_kwargs, epochs = _explainer_kwargs(explainer_name, ctx.num_classes)
 
     print(f"\n--- {explainer_name} ---", flush=True)
     t0 = time.perf_counter()
     results: list[ExplanationResult] = []
-    for result in run_explanations(
+    for r in run_explanations(
         ctx.model,
         ctx.explain_loader,
         ctx.device,
         explainer_name=explainer_name,
-        explainer_epochs=epochs_for_builder,
+        explainer_epochs=epochs,
         max_graphs=None,
         get_graph_id=_get_graph_id,
         apply_preprocessing_flag=True,
@@ -345,160 +443,53 @@ def run_one_explainer(
         pg_train_max_graphs=None,
         paper_metrics=True,
         paper_n_thresholds=PAPER_N_THRESHOLDS,
-        top_k_fraction=top_k_fraction,
         prediction_baseline=prediction_baseline,
         **explainer_kwargs,
     ):
-        results.append(result)
-        print(
-            f"  {result.graph_id}: fid+={_fmt(result.fidelity_fid_plus)} "
-            f"fid-={_fmt(result.fidelity_fid_minus)}"
-            f" char={_fmt(result.pyg_characterization)}"
-            f" Fsuf={_fmt(result.paper_sufficiency)}"
-            f" Fcom={_fmt(result.paper_comprehensiveness)}"
-            f" Ff1={_fmt(result.paper_f1_fidelity)}"
-            + ("" if result.valid else " [excluded]")
-            + (f" ({result.elapsed_s:.2f}s)" if result.elapsed_s > 0 else "")
+        results.append(r)
+        per_graph_summary = " ".join(
+            f"{short}={_fmt(getattr(r, field))}"
+            for field, short in _METRIC_FIELDS
         )
-    wall_time = time.perf_counter() - t0
+        suffix = "" if r.valid else " [excluded]"
+        elapsed = f" ({r.elapsed_s:.2f}s)" if r.elapsed_s > 0 else ""
+        print(f"  {r.graph_id}: {per_graph_summary}{suffix}{elapsed}", flush=True)
+    return results, time.perf_counter() - t0
 
-    valid_results = [r for r in results if r.valid]
-    n_valid = len(valid_results)
 
-    # Headline means: NaN-aware, valid-only. These hold the corrected
-    # (top-k binarized GraphFramEx) fidelity / characterization numbers and
-    # the clamped Longa F1-fidelity.
-    mean_fid_plus, mean_fid_minus = aggregate_fidelity(
-        valid_results, valid_only=False, nan_skip=True,
-    )
-    mean_char = nanmean([r.pyg_characterization for r in valid_results])
-    mean_fsuf = nanmean([r.paper_sufficiency for r in valid_results])
-    mean_fcom = nanmean([r.paper_comprehensiveness for r in valid_results])
-    mean_ff1 = nanmean([r.paper_f1_fidelity for r in valid_results])
+def _build_report(
+    *,
+    explainer_name: str,
+    seed: int,
+    results: list[ExplanationResult],
+    wall_time_s: float,
+) -> dict[str, Any]:
+    """Build the per-explainer ``explanation_report.json`` payload."""
+    valid_block = _build_valid_result_metrics(results)
+    all_block = _build_result_metrics(results, wall_time_s=wall_time_s)
+    run_status, run_status_note = diagnose_explanation_run(results)
+    return {
+        "explainer": explainer_name,
+        "seed": int(seed),
+        "run_status": run_status,
+        "run_status_note": run_status_note,
+        "valid_result_metrics": valid_block,
+        "result_metrics": all_block,
+        "per_graph": [_per_graph_entry(r) for r in results],
+    }
 
-    # Legacy / diagnostic siblings: same metric over *every* graph (the old
-    # behaviour) and the soft-mask GraphFramEx values for backwards
-    # compatibility with reports produced before the metric fix.
-    mean_fid_plus_all, mean_fid_minus_all = aggregate_fidelity(
-        results, valid_only=False, nan_skip=True,
-    )
-    mean_char_all = nanmean([r.pyg_characterization for r in results])
-    mean_fsuf_all = nanmean([r.paper_sufficiency for r in results])
-    mean_fcom_all = nanmean([r.paper_comprehensiveness for r in results])
-    mean_ff1_all = nanmean([r.paper_f1_fidelity for r in results])
 
-    mean_fid_plus_soft = nanmean([r.fidelity_fid_plus_soft for r in valid_results])
-    mean_fid_minus_soft = nanmean([r.fidelity_fid_minus_soft for r in valid_results])
-    mean_char_soft = nanmean([r.pyg_characterization_soft for r in valid_results])
-
-    # Diagnostics (per-explainer)
-    num_degenerate_mask = sum(1 for r in results if r.mask_spread < MASK_SPREAD_TOLERANCE)
-    num_misclassified = sum(1 for r in results if not r.correct_class)
-    num_prediction_baseline_mismatch = sum(
-        1 for r in results if r.prediction_baseline_mismatch
-    )
-    mean_mask_spread = nanmean([r.mask_spread for r in results])
-    mean_mask_entropy = nanmean([r.mask_entropy for r in results])
-    mean_mask_entropy_normalized = nanmean([
-        r.mask_entropy_normalized for r in results
-    ])
-    run_status, run_status_note = diagnose_explanation_run(
-        results,
-        mask_spread_tolerance=MASK_SPREAD_TOLERANCE,
-    )
-
-    print(f"Mean fidelity (fid+, top-k={top_k_fraction}): {_fmt(mean_fid_plus)}  "
-          f"[soft: {_fmt(mean_fid_plus_soft)}]")
-    print(f"Mean fidelity (fid-, top-k={top_k_fraction}): {_fmt(mean_fid_minus)}  "
-          f"[soft: {_fmt(mean_fid_minus_soft)}]")
-    print(f"Mean characterization (PyG, top-k): {_fmt(mean_char)}  "
-          f"[soft: {_fmt(mean_char_soft)}]")
-    print(f"Mean paper sufficiency (Fsuf): {_fmt(mean_fsuf)}")
-    print(f"Mean paper comprehensiveness (Fcom): {_fmt(mean_fcom)}")
-    print(f"Mean paper F1-fidelity (Ff1, clamped): {_fmt(mean_ff1)}")
-    print(
-        f"Explained {len(results)} graphs ({n_valid} valid, "
-        f"{num_degenerate_mask} degenerate, {num_misclassified} misclassified) "
-        f"in {wall_time:.1f}s."
-    )
-    if num_prediction_baseline_mismatch:
-        print(
-            f"[WARN] {num_prediction_baseline_mismatch} graph(s) differed from "
-            "the precomputed model prediction baseline.",
-            flush=True,
-        )
-    if run_status != "ok":
-        print(f"[WARN] Run status: {run_status} - {run_status_note}", flush=True)
-
-    out_path = explanations_run_dir(ctx.explainer_results_root, explainer_name)
+def _save_explainer_outputs(
+    *,
+    out_path: Path,
+    report: dict[str, Any],
+    results: list[ExplanationResult],
+) -> None:
+    """Write ``explanation_report.json`` and per-graph ``masks/<id>.json``."""
     if out_path.exists() and any(out_path.iterdir()):
         print(f"[INFO] Output exists; overwriting under: {out_path}", flush=True)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    per_graph_entries = []
-    for r in results:
-        per_graph_entries.append({
-            "graph_id": r.graph_id,
-            "fidelity_plus": r.fidelity_fid_plus,
-            "fidelity_minus": r.fidelity_fid_minus,
-            "pyg_characterization": r.pyg_characterization,
-            "fidelity_plus_soft": r.fidelity_fid_plus_soft,
-            "fidelity_minus_soft": r.fidelity_fid_minus_soft,
-            "pyg_characterization_soft": r.pyg_characterization_soft,
-            "paper_sufficiency": r.paper_sufficiency,
-            "paper_comprehensiveness": r.paper_comprehensiveness,
-            "paper_f1_fidelity": r.paper_f1_fidelity,
-            "valid": r.valid,
-            "correct_class": r.correct_class,
-            "pred_class": r.pred_class,
-            "target_class": r.target_class,
-            "prediction_baseline_mismatch": r.prediction_baseline_mismatch,
-            "has_node_mask": r.has_node_mask,
-            "has_edge_mask": r.has_edge_mask,
-            "mask_spread": r.mask_spread,
-            "mask_entropy": r.mask_entropy,
-            "mask_entropy_normalized": r.mask_entropy_normalized,
-            "elapsed_s": r.elapsed_s,
-        })
-
-    report = {
-        # Headline (corrected) fields keep their original key names so
-        # downstream readers - including the HTML report - keep working.
-        "mean_fidelity_plus": mean_fid_plus,
-        "mean_fidelity_minus": mean_fid_minus,
-        "mean_pyg_characterization": mean_char,
-        "mean_paper_sufficiency": mean_fsuf,
-        "mean_paper_comprehensiveness": mean_fcom,
-        "mean_paper_f1_fidelity": mean_ff1,
-        # Legacy siblings: same metric over every graph and / or with the
-        # legacy soft-mask GraphFramEx fidelity. Provided so anyone diffing
-        # against the pre-fix report can still recover the old numbers.
-        "mean_fidelity_plus_all_graphs": mean_fid_plus_all,
-        "mean_fidelity_minus_all_graphs": mean_fid_minus_all,
-        "mean_pyg_characterization_all_graphs": mean_char_all,
-        "mean_paper_sufficiency_all_graphs": mean_fsuf_all,
-        "mean_paper_comprehensiveness_all_graphs": mean_fcom_all,
-        "mean_paper_f1_fidelity_all_graphs": mean_ff1_all,
-        "mean_fidelity_plus_soft": mean_fid_plus_soft,
-        "mean_fidelity_minus_soft": mean_fid_minus_soft,
-        "mean_pyg_characterization_soft": mean_char_soft,
-        # Diagnostics
-        "num_graphs": len(results),
-        "num_valid": n_valid,
-        "num_degenerate_mask": num_degenerate_mask,
-        "num_misclassified": num_misclassified,
-        "num_prediction_baseline_mismatch": num_prediction_baseline_mismatch,
-        "mean_mask_spread": mean_mask_spread,
-        "mean_mask_entropy": mean_mask_entropy,
-        "mean_mask_entropy_normalized": mean_mask_entropy_normalized,
-        "top_k_fraction": float(top_k_fraction),
-        "seed": int(seed),
-        "run_status": run_status,
-        "run_status_note": run_status_note,
-        "explainer": explainer_name,
-        "wall_time_s": wall_time,
-        "per_graph": per_graph_entries,
-    }
     (out_path / "explanation_report.json").write_text(
         dumps_strict_json(report, indent=2), encoding="utf-8",
     )
@@ -528,39 +519,51 @@ def run_one_explainer(
         (masks_dir / f"{r.graph_id}.json").write_text(
             dumps_strict_json(mask_data, indent=2), encoding="utf-8",
         )
-    print(f"Report and masks saved to {out_path}")
 
-    summary = {
-        "mean_fid_plus": mean_fid_plus,
-        "mean_fid_minus": mean_fid_minus,
-        "mean_pyg_characterization": mean_char,
-        "mean_paper_sufficiency": mean_fsuf,
-        "mean_paper_comprehensiveness": mean_fcom,
-        "mean_paper_f1_fidelity": mean_ff1,
-        "mean_fid_plus_all_graphs": mean_fid_plus_all,
-        "mean_fid_minus_all_graphs": mean_fid_minus_all,
-        "mean_pyg_characterization_all_graphs": mean_char_all,
-        "mean_paper_sufficiency_all_graphs": mean_fsuf_all,
-        "mean_paper_comprehensiveness_all_graphs": mean_fcom_all,
-        "mean_paper_f1_fidelity_all_graphs": mean_ff1_all,
-        "mean_fid_plus_soft": mean_fid_plus_soft,
-        "mean_fid_minus_soft": mean_fid_minus_soft,
-        "mean_pyg_characterization_soft": mean_char_soft,
-        "num_graphs": len(results),
-        "num_valid": n_valid,
-        "num_degenerate_mask": num_degenerate_mask,
-        "num_misclassified": num_misclassified,
-        "num_prediction_baseline_mismatch": num_prediction_baseline_mismatch,
-        "mean_mask_spread": mean_mask_spread,
-        "mean_mask_entropy": mean_mask_entropy,
-        "mean_mask_entropy_normalized": mean_mask_entropy_normalized,
-        "top_k_fraction": float(top_k_fraction),
-        "seed": int(seed),
-        "run_status": run_status,
-        "run_status_note": run_status_note,
-        "wall_time_s": wall_time,
-    }
-    return summary, per_graph_entries
+
+def run_one_explainer(
+    ctx: ExplanationRunContext,
+    explainer_name: str,
+    *,
+    seed: int = DEFAULT_SEED,
+    prediction_baseline: dict[str, PredictionBaselineEntry] | None = None,
+) -> dict[str, Any]:
+    """Run *explainer_name* on the fold and persist its report. Return the report dict."""
+    results, wall_time_s = _explain_all_graphs(
+        ctx, explainer_name, prediction_baseline=prediction_baseline,
+    )
+    report = _build_report(
+        explainer_name=explainer_name,
+        seed=seed,
+        results=results,
+        wall_time_s=wall_time_s,
+    )
+
+    _print_metric_block("valid_result_metrics", report["valid_result_metrics"])
+    _print_metric_block("result_metrics", report["result_metrics"])
+
+    n_baseline_mismatch = sum(1 for r in results if r.prediction_baseline_mismatch)
+    if n_baseline_mismatch:
+        print(
+            f"[WARN] {n_baseline_mismatch} graph(s) differed from the precomputed "
+            "model prediction baseline.",
+            flush=True,
+        )
+    if report["run_status"] != "ok":
+        print(
+            f"[WARN] Run status: {report['run_status']} - {report['run_status_note']}",
+            flush=True,
+        )
+
+    out_path = explanations_run_dir(ctx.explainer_results_root, explainer_name)
+    _save_explainer_outputs(out_path=out_path, report=report, results=results)
+    print(f"Report and masks saved to {out_path}", flush=True)
+    return report
+
+
+# ----------------------------------------------------------------------------
+# Cross-explainer report + baseline I/O
+# ----------------------------------------------------------------------------
 
 
 def write_comparison_report(
@@ -570,12 +573,10 @@ def write_comparison_report(
     fold_metric: str,
     split_name: str,
     explainer_names: list[str],
-    all_summaries: dict[str, dict],
-    all_per_graph: dict[str, list[dict]],
+    all_reports: dict[str, dict],
     seed: int,
-    top_k_fraction: float,
 ) -> Path:
-    """Write cross-explainer comparison JSON (Longa-style aggregation over the split)."""
+    """Write a cross-explainer comparison JSON for one fold."""
     comparison_path = explainer_results_root / RESULTS_EXPLANATIONS
     comparison_path.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -585,10 +586,19 @@ def write_comparison_report(
         "fold_metric": fold_metric,
         "split": split_name,
         "seed": int(seed),
-        "top_k_fraction": float(top_k_fraction),
         "explainers": explainer_names,
-        "per_explainer": all_summaries,
-        "per_graph_per_explainer": all_per_graph,
+        "per_explainer": {
+            name: {
+                "valid_result_metrics": all_reports[name]["valid_result_metrics"],
+                "result_metrics": all_reports[name]["result_metrics"],
+                "run_status": all_reports[name]["run_status"],
+                "run_status_note": all_reports[name]["run_status_note"],
+            }
+            for name in explainer_names
+        },
+        "per_graph_per_explainer": {
+            name: all_reports[name]["per_graph"] for name in explainer_names
+        },
     }
     json_path = comparison_path / "comparison_report.json"
     json_path.write_text(
@@ -617,12 +627,15 @@ def write_prediction_baseline(
     return baseline_path
 
 
+# ----------------------------------------------------------------------------
+# Per-fold orchestration
+# ----------------------------------------------------------------------------
+
+
 def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
-    """Run all explainers on a single fold context and write the comparison report."""
+    """Run all explainers on one fold and write the comparison report."""
     explainer_names = list(AVAILABLE_EXPLAINERS)
 
-    all_summaries: dict[str, dict] = {}
-    all_per_graph: dict[str, list[dict]] = {}
     prediction_baseline = collect_prediction_baseline(
         ctx.model,
         ctx.explain_loader,
@@ -635,17 +648,15 @@ def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
     )
     print(f"Model prediction baseline: {baseline_path}", flush=True)
 
+    all_reports: dict[str, dict] = {}
     for explainer_name in explainer_names:
         seed_everything(args.seed)
-        summary, per_graph = run_one_explainer(
+        all_reports[explainer_name] = run_one_explainer(
             ctx,
             explainer_name,
-            top_k_fraction=args.top_k_fraction,
             seed=args.seed,
             prediction_baseline=prediction_baseline,
         )
-        all_summaries[explainer_name] = summary
-        all_per_graph[explainer_name] = per_graph
 
     json_path = write_comparison_report(
         explainer_results_root=ctx.explainer_results_root,
@@ -653,20 +664,17 @@ def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
         fold_metric=ctx.fold_metric,
         split_name=ctx.split_name,
         explainer_names=explainer_names,
-        all_summaries=all_summaries,
-        all_per_graph=all_per_graph,
+        all_reports=all_reports,
         seed=args.seed,
-        top_k_fraction=args.top_k_fraction,
     )
-    print(f"\nComparison report: {json_path}")
+    print(f"\nComparison report: {json_path}", flush=True)
 
 
 def main() -> None:
     args = parse_args()
     seed_everything(args.seed)
     print(
-        f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}; "
-        f"top-k fidelity fraction={args.top_k_fraction}",
+        f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}",
         flush=True,
     )
 

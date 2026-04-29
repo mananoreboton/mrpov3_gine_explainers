@@ -1,144 +1,234 @@
 # mprov3-explainer
 
-MPro-GINE Explainer – PyTorch Geometric pipeline for graph-level explanations of the trained GINE classifier. Loads the model and dataset from **mprov3_gine/results**, runs **all** registered explainers on the **single best CV fold** (chosen from summaries produced by **classify.py** or **train.py**), and follows the **common representation** from *"Explaining the Explainers in Graph Neural Networks: a Comparative Study"* (Longa et al.): **(1) explanation masks** and **(2) preprocessing** (filtering, normalization) before metrics.
+PyTorch Geometric pipeline for graph-level explanations of the trained
+GINE classifier in `mprov3_gine`. The runner loads the trained model and
+dataset from `mprov3_gine/results`, runs **every registered explainer** on
+the chosen CV fold(s), and follows the **common representation** of *Longa
+et al.* — *"Explaining the Explainers in Graph Neural Networks: a
+Comparative Study"* — i.e. (1) explainer-native mask generation followed by
+(2) Conversion / Filtering / Normalization preprocessing before any metric
+is computed.
 
-Artifacts go under **`mprov3_explainer/results/folds/fold_<k>/`**: **`explanations/<explainer>/`**, **`visualizations/<explainer>/graphs/`** (PNGs from the optional viz script). Re-running overwrites after an **`[INFO]`** line.
+Per-fold artifacts live under
+`mprov3_explainer/results/folds/fold_<k>/`:
 
-## Flow (summary)
+- `explanations/<EXPLAINER>/explanation_report.json` and `masks/<graph>.json`,
+- `explanations/comparison_report.json` (cross-explainer summary for the fold),
+- `explanations/model_prediction_baseline.json` (one fold-level baseline shared by every explainer),
+- `visualizations/<EXPLAINER>/graphs/mask_<graph>.png` (RDKit drawings, written by `generate_visualizations.py`),
+- `explanation_web_report/index.html` (per-fold HTML report).
 
-Fold selection and I/O are handled in [`scripts/run_explanations.py`](scripts/run_explanations.py); per-graph explain → preprocess → metrics is in [`src/mprov3_explainer/pipeline.py`](src/mprov3_explainer/pipeline.py). The detailed **explanation substeps** table below maps each phase to code.
+A multi-fold global index is written to
+`results/explanation_web_report/index.html` whenever more than one fold is
+processed in a single visualization run.
 
-## `scripts/run_explanations.py`: command without flags
+Re-running the explanation script overwrites any existing per-explainer
+output after an `[INFO] Output exists; overwriting under: …` line.
 
-From **`mprov3_explainer/`** (after `uv sync`):
+## Flow at a glance
+
+The pipeline has three thin layers:
+
+1. **Fold and I/O resolution** — [`scripts/run_explanations.py`](scripts/run_explanations.py)
+   builds an `ExplanationRunContext` that bundles the dataset, model, split
+   loaders, device, and per-fold output root.
+2. **Per-graph explain → preprocess → metrics** — [`src/mprov3_explainer/pipeline.py`](src/mprov3_explainer/pipeline.py)
+   yields one `ExplanationResult` per graph carrying the Longa paper metrics
+   plus the PyG metrics from `torch_geometric.explain.metric`.
+3. **Aggregate + persist** — the runner builds two metric tables
+   (`valid_result_metrics` and `result_metrics`, see below) and writes them
+   into the per-explainer JSON; [`src/mprov3_explainer/web_report.py`](src/mprov3_explainer/web_report.py)
+   renders the same two tables in the HTML reports.
+
+## `scripts/run_explanations.py` — defaults
+
+From `mprov3_explainer/` after `uv sync`:
 
 ```bash
 uv run python scripts/run_explanations.py
 ```
 
-This run:
+This invocation:
 
-- Resolves **mprov3_gine/results** and picks the **best fold** using **`test_accuracy`** from **`classifications/classification_summary.json`**.
+- Resolves `mprov3_gine/results` and picks the **best fold** using
+  `test_accuracy` from `classifications/classification_summary.json`
+  (`--fold_metric` default).
 - Uses the **test** split loader for the explanation loop (`--split` default).
-- Loads **`best_gnn.pt`** for that fold and **`MProGNN`** hyperparameters from **`mprov3_gine_explainer_defaults`** (must match training).
-- Loads splits and structures from the workspace MPro snapshot directory named in **`DEFAULT_MPRO_SNAPSHOT_DIR_NAME`** (same default as the GNN pipeline).
-- Runs **every** name in **`AVAILABLE_EXPLAINERS`** in order.
-- Enables the **mask spread filter** (τ = 10⁻³): masks with max − min below τ are marked invalid; disable only with **`--no_mask_spread_filter`**.
-- Uses **Nt = 100** threshold steps for Longa-style paper metrics (`PAPER_N_THRESHOLDS` in the script).
-- Writes **`explanation_report.json`** and **`masks/`** per explainer, then **`explanations/comparison_report.json`** for all explainers.
+- Loads `best_gnn.pt` for that fold and the `MProGNN` hyperparameters from
+  `mprov3_gine_explainer_defaults` (these must match the values used at
+  training time).
+- Reads splits and ligand graphs from the workspace MPro snapshot directory
+  named in `DEFAULT_MPRO_SNAPSHOT_DIR_NAME`.
+- Runs every name in `AVAILABLE_EXPLAINERS` in registry order, re-seeding
+  RNGs before each explainer so explainer order does not affect individual
+  results.
+- Enables the **mask-spread filter** (τ = 10⁻³); masks with `max − min < τ`
+  are marked invalid. Disable only with `--no_mask_spread_filter`.
+- Uses **`Nt = 100`** percentile thresholds for the Longa paper-metric sweep
+  (`PAPER_N_THRESHOLDS` in the script).
+- Builds the PyG fidelity curve over the sparsity grid
+  `(0.1, 0.2, …, 0.9)` (`DEFAULT_FIDELITY_CURVE_TOP_K`) so PyG's
+  `fidelity_curve_auc` has something to integrate.
+- Writes `explanation_report.json` plus `masks/` per explainer, then the
+  cross-explainer `explanations/comparison_report.json`.
 
-**PGEXPL:** always trains its MLP on the **train** loader first, then explains graphs from the split selected by **`--split`** (default test).
+**PGExplainer:** trains its MLP on the **train** loader first, even when
+`--split=test` or `--split=validation`. PGExplainer is currently disabled in
+`AVAILABLE_EXPLAINERS` because every mask it produces on this dataset
+collapses to a constant.
 
-## `scripts/run_explanations.py`: flags and parameters
+## `scripts/run_explanations.py` — flags
 
-Paths are **not** configurable on the CLI: GNN artifacts are under **`mprov3_gine/results`**, snapshot/splits under the workspace default from **`mprov3_gine_explainer_defaults`**.
+Path arguments are intentionally **not** configurable on the CLI; they
+follow `DEFAULT_DATA_ROOT`, `DEFAULT_RESULTS_ROOT`, and
+`DEFAULT_MPRO_SNAPSHOT_DIR_NAME` from `mprov3_gine_explainer_defaults`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--split` | `test` | Which loader’s graphs are explained: `train`, `validation`, or `test`. Does **not** change where **PGEXPL** trains (always **train**). |
-| `--fold_metric` | `test_accuracy` | `test_accuracy` → best fold from **`classification_summary.json`**. `train_accuracy` → **`training_summary.json`** field **`best_train_accuracy_fold_index`**. |
-| `--no_mask_spread_filter` | off (filter **on**) | If set, skips degenerate-mask rejection: no check that max(mask) − min(mask) ≥ τ before normalization. |
-| `--seed` | `42` | RNG seed for `torch` / `numpy` / `random` / `PyG`. Re-seeded before every explainer so the order of explainers does not affect their individual results. |
-| `--top_k_fraction` | `0.2` | Fraction of top-ranked entries kept by the GraphFramEx top-k binarized fidelity (the headline `mean_fidelity_*` numbers). `0.2` is the GraphFramEx canonical value. |
+| `--split` | `test` | Loader used by the explanation loop: `train`, `validation`, or `test`. PGExplainer always trains its MLP on `train` regardless of this flag. |
+| `--folds` | unset | Explicit list of fold indices to run, e.g. `--folds 0 2 4`. Overrides `--fold_metric`. |
+| `--fold_metric` | `test_accuracy` | Best-fold selector when `--folds` is unset. `test_accuracy` reads `classifications/classification_summary.json`; `train_accuracy` reads `training_summary.json` (`best_train_accuracy_fold_index`). |
+| `--no_mask_spread_filter` | filter on | If set, skips the `max − min ≥ τ` degenerate-mask check. Use only for debugging. |
+| `--seed` | `42` | RNG seed for `torch` / `numpy` / `random` / `PyG`. Re-seeded before every explainer. |
 
-Example combinations:
+Examples:
 
 ```bash
 uv run python scripts/run_explanations.py --split validation
 uv run python scripts/run_explanations.py --fold_metric train_accuracy
+uv run python scripts/run_explanations.py --folds 0 2 4
 uv run python scripts/run_explanations.py --split train --no_mask_spread_filter
-uv run python scripts/run_explanations.py --seed 7 --top_k_fraction 0.1
+uv run python scripts/run_explanations.py --seed 7
 ```
 
-## Metrics: definitions, ranges, how they are computed
+## Metrics
 
-Every entry in `explanation_report.json` (per explainer) and in the
-per-explainer block of `comparison_report.json` is documented below. The
-formulas reflect the **post-fix** implementation that replaced the silent
-zeros / unclamped Ff1 / soft-mask fidelity headline of the previous version.
+Each `explanation_report.json` carries one `per_graph` list and **two
+aggregate tables** built from the same per-graph metric set:
 
-| JSON key | Formula | Range | Source / notes |
-|---------|---------|-------|---------------|
-| `mean_fidelity_plus` | mean over **valid** graphs (NaN-skipped) of PyG/GraphFramEx **Fid+** computed on the **top-k binarized** mask. In PyG model-explanation mode this is the class-decision rate `1 - I(model(complement) == model(full))`; in phenomenon mode PyG uses target-class correctness. | `[0, 1]` (higher = stronger necessity) | Class-decision metric from PyG `torch_geometric.explain.metric.fidelity`, not a probability-drop ratio. Top-k binarization (default k=0.2) makes the explanation/complement hard subsets. |
-| `mean_fidelity_minus` | mean over **valid** graphs (NaN-skipped) of PyG/GraphFramEx **Fid−** computed on the **top-k binarized** mask. In PyG model-explanation mode this is the class-decision rate `1 - I(model(explanation) == model(full))`; in phenomenon mode PyG uses target-class correctness. | `[0, 1]` (lower = stronger sufficiency) | Class-decision metric from PyG `torch_geometric.explain.metric.fidelity`, not a probability-drop ratio. |
-| `mean_pyg_characterization` | harmonic-mean-style score over (Fid+, 1 − Fid−) with weights 0.5 / 0.5; NaN if Fid+/Fid− are NaN | `[0, 1]` | PyG `torch_geometric.explain.metric.characterization_score` |
-| `mean_paper_sufficiency` | raw signed average probability difference across a **percentile threshold sweep**: at each kept-fraction *q*, build the explanation subgraph from the top-*q* nodes (or edges, for edge-only explainers), then average `P_target(full) - P_target(subgraph)` | `[-1, 1]` (lower / negative = better; negative means the explanation subgraph increased target probability) | Longa et al., *Benchmarking*, 2025 section 5.2. This value is intentionally not clamped before reporting. |
-| `mean_paper_comprehensiveness` | raw signed average probability difference across the same sweep, but on the complement subgraph: `P_target(full) - P_target(complement)` | `[-1, 1]` (higher = better; negative means the complement increased target probability) | Same source. This value is intentionally not clamped before reporting. |
-| `mean_paper_f1_fidelity` | per-graph **clamped** Ff1 = `2*(1 - Fsuf_c)*Fcom_c / ((1 - Fsuf_c) + Fcom_c)` with `Fsuf_c, Fcom_c = clip(Fsuf, Fcom, [0, 1])`, then NaN-skipped mean | `[0, 1]` | Longa et al. The clamp is applied only for the F-score combination; the reported `Fsuf` and `Fcom` remain raw signed probability differences. |
-| `mean_fidelity_plus_all_graphs`, `mean_fidelity_minus_all_graphs`, `mean_pyg_characterization_all_graphs`, `mean_paper_sufficiency_all_graphs`, `mean_paper_comprehensiveness_all_graphs`, `mean_paper_f1_fidelity_all_graphs` | same per-graph values, averaged over **every** explained graph (including invalid ones) | same as the matching headline | All-graph diagnostics. Use them alongside valid-only headline means to see how filtering, misclassification, and degenerate masks affect conclusions. |
-| `mean_fidelity_plus_soft`, `mean_fidelity_minus_soft`, `mean_pyg_characterization_soft` | GraphFramEx fidelity / characterization computed on the **soft** mask (no top-k binarization), valid-only NaN-skipped | `[0, 1]` | Diagnostic. The soft-mask values typically collapse to `Fid+ ≈ Fid−` because `mask · x` and `(1 − mask) · x` are just two rescalings of the same input; this is why the headline switched to top-k. |
-| `num_graphs` | total graphs run through the explainer | integer ≥ 0 | — |
-| `num_valid` | graphs with `valid=True` (correct class, mask spread ≥ τ, no NaN metric) | integer ≤ `num_graphs` | — |
-| `num_degenerate_mask` | graphs whose representative mask has spread (max − min) below τ = 1e-3 | integer | New diagnostic. Tracks how often a mask is effectively constant (PGEXPL frequently degenerates without enough training). |
-| `num_misclassified` | graphs where the fold-level model prediction baseline differs from the ground-truth label | integer | Computed once before any explainer runs, so this count should be identical for all explainers in the same fold and split. |
-| `num_prediction_baseline_mismatch` | graphs where an explainer-time prediction differs from the precomputed baseline | integer | Should be 0. Nonzero values indicate model state drift or explainer side effects. |
-| `mean_mask_spread` | NaN-skipped mean of `max(mask) − min(mask)` across explained graphs | `[0, ∞)` | — |
-| `mean_mask_entropy` | NaN-skipped mean of raw Shannon entropy (in nats) of the normalized mask interpreted as a probability distribution | `[0, log(N)]` | Raw diagnostic only; maximum grows with mask size, so do not use this alone for explainer comparisons. |
-| `mean_mask_entropy_normalized` | NaN-skipped mean of `mask_entropy / log(mask_size)` | `[0, 1]` | Size-normalized entropy for comparing mask diffuseness across molecules and node-vs-edge explainers. |
-| `top_k_fraction` | the *k* used by the headline top-k fidelity (CLI `--top_k_fraction`) | `(0, 1]` | Self-describing parameter; default `0.2`. |
-| `seed` | the RNG seed used for this run (CLI `--seed`) | integer | Self-describing parameter; default `42`. |
-| `run_status`, `run_status_note` | compact quality flag for the explainer run | text | `failed_all_degenerate_masks` means every attempted mask had spread below τ and the headline means must not be used as valid thesis evidence. |
-| `wall_time_s` | wall-clock seconds spent inside `run_explanations` for this explainer | `[0, ∞)` | — |
-| `per_graph[*]` | per-graph mirror of the headline keys (`fidelity_plus`, `fidelity_minus`, `pyg_characterization`, `*_soft` siblings, `paper_*`, `mask_spread`, `mask_entropy`, `mask_entropy_normalized`, `valid`, `correct_class`, `has_node_mask`, `has_edge_mask`, `elapsed_s`) | per key | NaN and infinity values are recursively serialized as JSON `null`; writers use `allow_nan=False` to enforce strict JSON. |
+- **`valid_result_metrics`** — aggregated only over graphs whose
+  explanation produced a complete, well-defined metric set (`valid == true`).
+- **`result_metrics`** — aggregated over **every** graph in the fold (NaN-
+  skipped means), plus `wall_time_s` and `num_graphs`.
 
-### Sweep dispatch (paper metrics)
+A graph is `valid` iff every metric below is finite, the model prediction
+matches the ground-truth class, and the explanation's representative mask
+passes the spread filter (or the filter is disabled).
 
-`_paper_metrics_from_masks` dispatches by the available masks:
+### Per-graph metrics
+
+| JSON key | Definition | Range | Source |
+|----------|------------|-------|--------|
+| `paper_sufficiency` | Longa **Fsuf**: average `P_target(full) − P_target(subgraph)` across the percentile sweep, on the explanation subgraph induced by the top-`q` fraction of nodes (or edges, for edge-only explanations). | `[-1, 1]` (lower / negative is better) | Longa et al. (2025). Reported unclamped. |
+| `paper_comprehensiveness` | Longa **Fcom**: same sweep, on the **complement** subgraph: `P_target(full) − P_target(complement)`. | `[-1, 1]` (higher is better) | Longa et al. (2025). Reported unclamped. |
+| `paper_f1_fidelity` | Longa **Ff1** = `2·(1 − Fsuf_c)·Fcom_c / ((1 − Fsuf_c) + Fcom_c)` with `Fsuf_c, Fcom_c = clip([Fsuf, Fcom], 0, 1)`. | `[0, 1]` | Longa et al. (2025). Clamping is applied **only for the F-score combination**; the raw `Fsuf`/`Fcom` keys stay signed. |
+| `pyg_fidelity_plus` | PyG `fidelity` Fid+, called on the preprocessed (soft) explanation as PyG ships it. Class-decision rate (model mode) or target-class rate (phenomenon mode). | `[0, 1]` (higher = stronger necessity) | `torch_geometric.explain.metric.fidelity` |
+| `pyg_fidelity_minus` | PyG `fidelity` Fid−, same call. | `[0, 1]` (lower = stronger sufficiency) | Same. |
+| `pyg_characterization_score` | Weighted harmonic mean of Fid+ and `1 − Fid−` (`pos_weight = neg_weight = 0.5`). | `[0, 1]` | `torch_geometric.explain.metric.characterization_score` |
+| `pyg_fidelity_curve_auc` | AUC of the curve `f(x) = Fid+ / (1 − Fid−)` evaluated on the per-graph top-`k` sparsity grid `(0.1, 0.2, …, 0.9)`. NaN when any `Fid− == 1`. | `[0, ∞)` | `torch_geometric.explain.metric.fidelity_curve_auc` (sweep is required because the helper integrates a curve). |
+| `pyg_unfaithfulness` | Graph-Explanation-Faithfulness (GEF) = `1 − exp(−KL(p_full ‖ p_masked))`. | `[0, 1]` (lower = more faithful) | `torch_geometric.explain.metric.unfaithfulness` |
+| `valid` | True iff every metric above is finite, prediction is correct, and the mask passes the spread filter (when on). | bool | Validity flag used to populate `valid_result_metrics`. |
+| `elapsed_s` | Wall-clock seconds inside the explainer's forward call for this graph. | `[0, ∞)` | — |
+| `correct_class`, `pred_class`, `target_class`, `prediction_baseline_mismatch`, `has_node_mask`, `has_edge_mask` | Validity bookkeeping; do not appear in the aggregate tables. | — | — |
+
+NaN and infinity are recursively serialised as JSON `null` (writers use
+`allow_nan=False` to keep the JSON strict).
+
+### `valid_result_metrics`
+
+| Key | Description |
+|-----|-------------|
+| `num_valid_graphs` | Number of graphs with `valid == true` that contributed to the means. |
+| `mean_paper_sufficiency`, `mean_paper_comprehensiveness`, `mean_paper_f1_fidelity` | NaN-skipped means of the corresponding per-graph paper metric over valid graphs. |
+| `mean_pyg_fidelity_plus`, `mean_pyg_fidelity_minus`, `mean_pyg_characterization_score`, `mean_pyg_fidelity_curve_auc`, `mean_pyg_unfaithfulness` | NaN-skipped means of the corresponding per-graph PyG metric over valid graphs. |
+
+### `result_metrics`
+
+| Key | Description |
+|-----|-------------|
+| `wall_time_s` | Total wall-clock seconds the explainer spent inside `run_explanations` for this fold. |
+| `num_graphs` | Total number of graphs explained on the split (valid + invalid). |
+| `mean_paper_sufficiency`, `mean_paper_comprehensiveness`, `mean_paper_f1_fidelity` | NaN-skipped means over **all** graphs. |
+| `mean_pyg_fidelity_plus`, `mean_pyg_fidelity_minus`, `mean_pyg_characterization_score`, `mean_pyg_fidelity_curve_auc`, `mean_pyg_unfaithfulness` | NaN-skipped means over all graphs. |
+
+The report also carries `explainer`, `seed`, `run_status`, and
+`run_status_note` at the top level. `run_status` ∈ {`ok`, `partial_invalid`,
+`failed_no_valid_metrics`, `empty_run`}; the note explains the cause when
+the status is not `ok` so a fold whose `valid_result_metrics` are all NaN
+cannot be silently mistaken for a successful run.
+
+### Paper-metric sweep dispatch
+
+`_paper_metrics_from_masks` dispatches the percentile sweep by which masks
+the explainer produced; this preserves native granularity for edge-only
+explainers instead of coercing edges into nodes via incident-edge averaging:
 
 | Mask present | Sweep granularity | Function |
 |--------------|------------------|----------|
-| node mask (with or without edge mask) | top-*q* nodes ⇒ induced node subgraph | `_paper_sufficiency_and_comprehensiveness` |
-| edge mask only | top-*q* edges ⇒ induced edge subgraph (node set = endpoints of kept edges) | `_paper_metrics_from_edge_mask` |
-| neither | NaN triple (returned as `null`) | — |
+| node mask (with or without edge mask) | top-`q` nodes ⇒ induced node subgraph | `_paper_sufficiency_and_comprehensiveness` |
+| edge mask only | top-`q` edges ⇒ induced edge subgraph (nodes = endpoints of kept edges) | `_paper_metrics_from_edge_mask` |
+| neither | NaN triple | — |
 
-This restores native granularity for the four edge-only explainers
-(`GRADEXPLEDGE`, `IGEDGE`, `GNNEXPL`, `PGEXPL`) instead of coercing their edge
-masks into node masks via incident-edge averaging.
+## Code anchors (one row per substep)
 
-## Explanation substeps (code anchors)
+| Step | What it does | Anchor |
+|------|--------------|--------|
+| **Run context** | Builds loaders, device, checkpoint path, `MProGNN`, output root, and mask-filter flag. | `ExplanationRunContext`, `build_explanation_run_context_for_fold` in [`scripts/run_explanations.py`](scripts/run_explanations.py). |
+| **Prediction baseline** | Computes per-graph `(pred_class, target_class, correct_class)` once per fold, before any explainer runs. Subsequent explainers reuse this baseline to keep `valid` consistent. | `collect_prediction_baseline` in [`pipeline.py`](src/mprov3_explainer/pipeline.py); `write_prediction_baseline` in [`run_explanations.py`](scripts/run_explanations.py). |
+| **Explain graph** | Runs the PyG `Explainer` forward to produce the raw `edge_mask`/`node_mask`. Times the call to populate `elapsed_s`. | `_forward_raw_explanation` in [`pipeline.py`](src/mprov3_explainer/pipeline.py). |
+| **Filtering + Normalization** | Longa-style: mark invalid if mask spread `< τ` or class mismatch (when `correct_class_only=True`); min-max normalize to `[0, 1]`. | `apply_preprocessing` in [`preprocessing.py`](src/mprov3_explainer/preprocessing.py); `_preprocess_for_metrics` in [`pipeline.py`](src/mprov3_explainer/pipeline.py). |
+| **PyG metrics (no extra binarization)** | `fidelity`, `characterization_score` and `unfaithfulness` are called as PyG ships them. `fidelity_curve_auc` is built from a sparsity sweep because the helper integrates a curve. | `_compute_pyg_fidelity`, `_compute_pyg_characterization`, `_compute_pyg_fidelity_curve_auc`, `_compute_pyg_unfaithfulness` in [`pipeline.py`](src/mprov3_explainer/pipeline.py). |
+| **Paper metrics (Longa percentile sweep)** | Mask-type-aware sweep that returns `(Fsuf, Fcom, Ff1)`. Ff1 is clamped to `[0, 1]` only for the F-score combination. | `_paper_metrics_from_masks` (dispatcher), `_paper_sufficiency_and_comprehensiveness`, `_paper_metrics_from_edge_mask`, `_paper_f1_fidelity` in [`pipeline.py`](src/mprov3_explainer/pipeline.py). |
+| **Validity flag** | Any NaN metric forces `valid = False`, even if the graph passed the class and spread filters. | End of the per-graph loop in `run_explanations` ([`pipeline.py`](src/mprov3_explainer/pipeline.py)). |
+| **Aggregation + persist** | Build `valid_result_metrics` (valid-only) and `result_metrics` (all graphs, plus runtime); write `explanation_report.json` and per-graph `masks/<id>.json`; finally write the cross-explainer `comparison_report.json`. | `_build_valid_result_metrics`, `_build_result_metrics`, `run_one_explainer`, `write_comparison_report` in [`run_explanations.py`](scripts/run_explanations.py). |
 
-Each row is one conceptual step: what the code does, and the main line or call to read first. Line numbers refer to the current tree; adjust if you edit those files.
+`run_status` (`diagnose_explanation_run` in [`pipeline.py`](src/mprov3_explainer/pipeline.py))
+makes any "no valid graphs" run loud in the JSON and the HTML report so
+those rows are not silently consumed as thesis evidence.
 
-| Step | What the code does | Anchor |
-|------|-------------------|--------|
-| **Configuration (dataset, classes, model)** | Builds loaders, device, checkpoint, `MProGNN`, output root, and mask-filter flag into **`ExplanationRunContext`**. | [`ExplanationRunContext`](scripts/run_explanations.py) (dataclass ~81); fill in [`build_explanation_run_context`](scripts/run_explanations.py) (~137). |
-| **Explainer configuration** | Per explainer: kwargs (`num_classes`, IG steps, PGM samples) and epoch count; then `run_explanations` (~506). | [`run_one_explainer`](scripts/run_explanations.py): `run_explanations(...)` call (~245). |
-| **Explain graph** | Runs the PyG explainer forward to produce raw **`edge_mask` / `node_mask`**. | [`_forward_raw_explanation`](src/mprov3_explainer/pipeline.py): `raw_explanation = explainer(x, edge_index, **call_kwargs)` (~308). |
-| **Preprocessing wrapper** | Applies Longa-style pipeline on the raw explanation and copies masks onto a clone for metrics. | [`_preprocess_for_metrics`](src/mprov3_explainer/pipeline.py): `apply_preprocessing(...)` (~327). |
-| **Filtering** | Marks explanation invalid if edge or node mask spread (max − min) is below τ; optional correct-class filter. | [`apply_preprocessing`](src/mprov3_explainer/preprocessing.py): `_mask_weight_spread(...) < tol` (~151–158). |
-| **Normalization** | Per-mask min–max to [0, 1] on the preprocessed explanation (PyG path). | [`apply_preprocessing`](src/mprov3_explainer/preprocessing.py): `normalize_mask(edge_mask)` / `normalize_mask(node_mask)` (~168–174). |
-| **Conversion (edge → node, when needed)** | The legacy edge → node coercion is still implemented (`edge_mask_to_node_mask`) but is **no longer used** by paper metrics: edge-only explanations are now scored with an **edge-native** percentile sweep so granularity is preserved. | [`edge_mask_to_node_mask`](src/mprov3_explainer/preprocessing.py); see also `_paper_metrics_from_edge_mask` in [`pipeline.py`](src/mprov3_explainer/pipeline.py). |
-| **PyG fidelity (top-k headline)** | GraphFramEx **Fid+** / **Fid−** computed on the **top-k binarized** mask (k = `top_k_fraction`, default 0.2) as PyG class-decision rates, not probability-drop ratios. | [`_compute_pyg_fidelity_top_k`](src/mprov3_explainer/pipeline.py); the soft-mask variant is preserved as `_compute_pyg_fidelity` for the `*_soft` diagnostic columns. |
-| **Sufficiency & comprehensiveness (paper)** | Percentile sweep over kept-fraction *q*: raw signed averages `P_target(full) - P_target(subgraph)` (sufficiency) and `P_target(full) - P_target(complement)` (comprehensiveness). These can be negative and are reported unclamped. Dispatched by mask type (node-native vs edge-native). | [`_paper_sufficiency_and_comprehensiveness`](src/mprov3_explainer/pipeline.py); [`_paper_metrics_from_edge_mask`](src/mprov3_explainer/pipeline.py); dispatcher [`_paper_metrics_from_masks`](src/mprov3_explainer/pipeline.py). |
-| **Paper F1-fidelity (clamped)** | Combines Fsuf and Fcom into **Ff1** after clamping each raw probability difference to `[0, 1]` (the Longa et al. domain). NaN-propagating. | [`_paper_f1_fidelity`](src/mprov3_explainer/pipeline.py). |
-| **Framework metric (PyG)** | **Characterization** score from fid+ and fid−. NaN-aware. | [`_compute_pyg_characterization`](src/mprov3_explainer/pipeline.py). |
-| **Metrics aggregation** | After one explainer finishes, headline `mean_*` keys are **NaN-aware, valid-only** means. All-graph siblings (`mean_*_all_graphs`) and soft-mask siblings (`mean_*_soft`) are also written. The **diagnostics block** records `num_degenerate_mask`, `num_misclassified`, `mean_mask_spread`, raw `mean_mask_entropy`, normalized `mean_mask_entropy_normalized`, `top_k_fraction`, and `seed`. | [`run_one_explainer`](scripts/run_explanations.py); [`aggregate_fidelity`](src/mprov3_explainer/pipeline.py) (with `nan_skip=True` by default); [`nanmean`](src/mprov3_explainer/pipeline.py); [`write_comparison_report`](scripts/run_explanations.py). |
+## `scripts/generate_visualizations.py`
 
-**Longa PDF §5.2:** See the paper copy at [`../doc/2025_Longa_Benchmarking.pdf`](../doc/2025_Longa_Benchmarking.pdf) for the dataset-level aggregation protocol. This implementation reports **valid-only, NaN-skipped means** for the headline `mean_*` keys and also writes `mean_*_all_graphs` diagnostics. Thesis conclusions should compare both views: valid-only answers "how good are explanations when the model is correct and the mask is usable?", while all-graph diagnostics expose how much evidence is lost to invalid, misclassified, or degenerate cases.
+Draws RDKit PNGs from the saved masks and writes static HTML reports. By
+default it auto-discovers every `results/folds/fold_*/explanations/` tree
+that already contains explainer outputs. Use `--folds 0 2 4` to restrict
+to specific folds, `--report-only` to skip RDKit drawing (regenerates HTML
+only, no SDFs needed) and `--no-report` to skip the HTML output.
 
-## CLI (`scripts/generate_visualizations.py`)
+The per-fold HTML report renders the two metric tables side by side
+(`Valid result metrics` and `Result metrics`), one row per explainer, and
+embeds every per-graph mask JSON / PNG underneath. When more than one fold
+is processed, a global cross-fold index is written to
+`results/explanation_web_report/index.html`.
 
-Writes **PNG** files only (no HTML, no HTTP server). Expects **exactly one** fold directory under **`mprov3_explainer/results/folds/`** with explainer outputs; otherwise raises. Reads **`mprov3_explainer/results`** and ligand SDFs from the same default MPro snapshot path as the GNN pipeline (no path flags).
+```bash
+uv run python scripts/generate_visualizations.py
+uv run python scripts/generate_visualizations.py --folds 0 2 4
+uv run python scripts/generate_visualizations.py --report-only
+```
 
-## Available explainers (registry)
+## Available explainers
 
-| Name | Description |
-|------|-------------|
-| **GRADEXPINODE** | Captum Saliency on node features |
-| **GRADEXPLEDGE** | Captum Saliency on edge mask |
-| **GUIDEDBP** | Guided backprop on node features |
-| **IGNODE** | Integrated Gradients on node features |
-| **IGEDGE** | Integrated Gradients on edge mask |
-| **GNNEXPL** | PyG GNNExplainer |
-| **PGEXPL** | PGExplainer (train MLP on train loader, then explain) |
-| **PGMEXPL** | PGMExplainer |
+| Name | Mask | Method |
+|------|------|--------|
+| `GRADEXPINODE` | node features | Captum Saliency on `x` |
+| `GRADEXPLEDGE` | edge | Captum Saliency on PyG's edge-mask channel |
+| `GUIDEDBP` | node features | Captum Guided Backprop on `x` (requires `nn.ReLU` modules) |
+| `IGNODE` | node features | Integrated Gradients on `x` (Captum-safe bridge) |
+| `IGEDGE` | edge | Integrated Gradients on the edge-mask channel |
+| `GNNEXPL` | edge | PyG `GNNExplainer` (per-instance soft-mask optimisation) |
+| `PGEXPL` | edge | PyG `PGExplainer` (parametric edge mask, trains an MLP first). **Currently disabled** in `AVAILABLE_EXPLAINERS` because every produced mask is degenerate on this dataset. |
+| `PGMEXPL` | node features | `PGMExplainer` (perturbations + chi-square test) |
 
 ### Implementation notes
 
-- **Integrated Gradients:** Uses bridge modules so Captum does not break PyG `edge_index`; on **MPS**, IG may run on CPU then move masks to float32.
-- **PGExplainer:** Full training pass over the train loader each run (no CLI cap).
+- **Integrated Gradients** uses a Captum-safe bridge so PyG's `edge_index`
+  is not perturbed by Captum. On MPS the IG path may run on CPU; mask
+  tensors are then downcast to `float32`.
+- **PGExplainer** trains its MLP on the **train** loader for every run and
+  is therefore disabled by default — re-enable in `AVAILABLE_EXPLAINERS`
+  only if you change its training schedule.
 
-## Usage
+## Setup
 
 ```bash
 uv sync
@@ -146,4 +236,5 @@ uv run python scripts/run_explanations.py
 uv run python scripts/generate_visualizations.py
 ```
 
-Plausibility (AUROC) with a ground-truth mask is not enabled in the default script.
+Plausibility (AUROC against a ground-truth mask) is **not** enabled by the
+default scripts; this dataset has no ground-truth masks.

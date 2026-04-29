@@ -253,7 +253,7 @@ AVAILABLE_EXPLAINERS: list[str] = [
     "IGNODE",
     "IGEDGE",
     "GNNEXPL",
-    "PGEXPL",
+    # "PGEXPL" removed — all masks degenerate, no valid results
     "PGMEXPL",
 ]
 

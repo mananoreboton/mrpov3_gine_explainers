@@ -2,9 +2,9 @@
 
 Python pipeline to train a Graph Neural Network on the MPro-URV Version 3 snapshot for **3-class classification** (Category: low / medium / high potency). The codebase is split into configuration, data loading, GINE model, and separate training, validation, and test-set classification logic.
 
-**Shared defaults:** Training, fold, GINE architecture, path segment names, `**SplitConfig`**, `**DEFAULT_DATA_ROOT**`, `**DEFAULT_RESULTS_ROOT**`, and sibling project `**Path`s (`WORKSPACE_ROOT**`, `**GINE_PROJECT_DIR**`, …) come from `**mprov3_gine_explainer_defaults**` (monorepo: parent of the `mprov3_gine_explainer_defaults` folder). The model class is `**MProGNN**` in `**model.py**`.
+**Shared defaults:** Training, fold, GINE architecture, path segment names, `SplitConfig`, `DEFAULT_DATA_ROOT`, `DEFAULT_RESULTS_ROOT`, and sibling-project paths (`WORKSPACE_ROOT`, `GINE_PROJECT_DIR`, …) come from `mprov3_gine_explainer_defaults` (a sibling package of this one in the monorepo). The model class is `MProGNN` in `model.py`.
 
-**End-to-end GNN pipeline:** From `mprov3_gine/`, run `./run_pipeline.sh` to execute README steps 1–7 below with default paths and no extra CLI flags (after `uv sync` here). For explainer scripts and flags (e.g. **`--include-misclassified`**), see [`mprov3_explainer`](../mprov3_explainer/README.md) and run `uv sync` in `mprov3_gine_explainer_defaults`, `mprov3_gine`, and `mprov3_explainer` as needed.
+**End-to-end GNN pipeline:** From `mprov3_gine/`, run `./run_pipeline.sh` to execute README steps 1–7 below with default paths and no extra CLI flags (after `uv sync` here). For the explainer scripts and flags (e.g. `--folds`, `--split`, `--seed`), see [`mprov3_explainer`](../mprov3_explainer/README.md) and run `uv sync` in `mprov3_gine_explainer_defaults`, `mprov3_gine`, and `mprov3_explainer` as needed.
 
 ## Overview
 
@@ -207,7 +207,7 @@ flowchart TB
 
 ## Results layout
 
-All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at **fixed paths** below. Re-running overwrites existing outputs after an **`[INFO]`** log line where applicable.
+All script outputs live under `results/` (config: `DEFAULT_RESULTS_ROOT`) at **fixed paths** below. Re-running overwrites existing outputs after an `[INFO]` log line where applicable.
 
 **Migration:** Older timestamped trees such as `results/datasets/<YYYY-MM-DD_HHMMSS>/` are **not** read automatically. Move `data.pt` and `pdb_order.txt` into `results/datasets/`, or delete old folders and run `build_dataset.py` again. Do the same pattern for `trainings/`, `classifications/`, etc.
 
@@ -220,7 +220,7 @@ All script outputs live under `**results/`** (config: `DEFAULT_RESULTS_ROOT`) at
 | `results/check_format/datasets/`             | `check_PyG_data_format.py` (log only)                                                      | `check_output.log`                             |
 | `results/check_format/raw_data/`             | `check_raw_data_format.py` (log only)                                                      | `check_input.log`                              |
 
-Raw input (MPro snapshot with `Info.csv`, `Ligand/`, `Splits/`) stays at `--data_root` (default: `config.DEFAULT_DATA_ROOT`). Splits are always read from that raw root. Shared helpers (HTML, run logging, overwrite notices) live in `**utils.py`**.
+Raw input (MPro snapshot with `Info.csv`, `Ligand/`, `Splits/`) stays at `--data_root` (default: `DEFAULT_DATA_ROOT` from `mprov3_gine_explainer_defaults`). Splits are always read from that raw root. Shared helpers (HTML, run logging, overwrite notices) live in `utils.py`.
 
 ## Setup
 
@@ -417,28 +417,28 @@ You can reuse configs, loaders, and train/val/test logic in your own scripts.
 
 #### Configuration
 
-- `**SplitConfig**` (from `**mprov3_gine_explainer_defaults**`): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (use `BUILT_DATASET_FOLDER_NAME` / `"."` with `results/datasets` as loader root).
-- **Training hyperparameters** (`epochs`, `batch_size`, `lr`): defaults from `**mprov3_gine_explainer_defaults`**; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`). For `seed`, pass `--seed`; if omitted, defaults to `DEFAULT_SEED` (42) from `mprov3_gine_explainer_defaults`. The seed is applied via `seed_everything` which pins `random`, `numpy`, `torch`, and PyG RNGs.
-- `**model.MProGNN**`: GINE architecture; construct with hyperparameters (defaults align with `**mprov3_gine_explainer_defaults**` e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
+- `SplitConfig` (from `mprov3_gine_explainer_defaults`): train/val/test file names (`train_file`, `val_file`, `test_file`), `num_folds`, `fold_index`, `dataset_name` (use `BUILT_DATASET_FOLDER_NAME` / `"."` with `results/datasets` as loader root).
+- **Training hyperparameters** (`epochs`, `batch_size`, `lr`): defaults from `mprov3_gine_explainer_defaults`; `train.py` uses argparse (see `DEFAULT_TRAINING_EPOCHS`, `DEFAULT_BATCH_SIZE`, `DEFAULT_TRAINING_LR`). For `seed`, pass `--seed`; if omitted, defaults to `DEFAULT_SEED` (42) from `mprov3_gine_explainer_defaults`. The seed is applied via `seed_everything` which pins `random`, `numpy`, `torch`, and PyG RNGs.
+- `model.MProGNN`: GINE architecture; construct with hyperparameters (defaults align with `mprov3_gine_explainer_defaults`, e.g. `DEFAULT_IN_CHANNELS`, `DEFAULT_HIDDEN_CHANNELS`, …).
 
 #### Data loaders
 
-- `**loaders.collate_batch(batch)**`: collate list of PyG graphs into a batch (includes category labels; pIC50 still in data for reference).
-- `**loaders.create_data_loaders(dataset_root, data_root, split_config, batch_size=32)**`: loads the PyG dataset from `dataset_root/split_config.dataset_name` (typically `dataset_root = results/datasets`, `dataset_name = "."` from `BUILT_DATASET_FOLDER_NAME`) and returns `(train_loader, val_loader, test_loader)` using split files from `data_root/Splits/` and `fold_index`.
+- `loaders.collate_batch(batch)`: collate a list of PyG graphs into a batch (includes category labels; `pIC50` is still attached for reference).
+- `loaders.create_data_loaders(dataset_root, data_root, split_config, batch_size=32)`: loads the PyG dataset from `dataset_root/split_config.dataset_name` (typically `dataset_root = results/datasets`, `dataset_name = "."` from `BUILT_DATASET_FOLDER_NAME`) and returns `(train_loader, val_loader, test_loader)` using split files from `data_root/Splits/` and `fold_index`.
 
 #### Training
 
-- `**train_epoch.train_one_epoch(model, loader, optimizer, device, criterion_ce)**`: one training epoch (cross-entropy); returns mean loss.
+- `train_epoch.train_one_epoch(model, loader, optimizer, device, criterion_ce)`: one training epoch (cross-entropy); returns the mean loss.
 
 #### Validation
 
-- `**validation.evaluate_validation(model, loader, device)**`: returns `**ValidationMetrics**` (`accuracy`).
+- `validation.evaluate_validation(model, loader, device)`: returns `ValidationMetrics` (`accuracy`).
 
 #### Test-set classification
 
-- `**classification.classify_test(model, loader, device)**`: returns `**TestMetrics**` (`accuracy`).
-- `**classification.classify_test_with_predictions(model, loader, device)**`: returns `**(TestMetrics, list of (pdb_id, real_category, pred_category))**` with categories in original scale (-1, 0, 1).
-- `**classification.print_test_classification_report(metrics)**`: prints test accuracy.
+- `classification.classify_test(model, loader, device)`: returns `TestMetrics` (`accuracy`).
+- `classification.classify_test_with_predictions(model, loader, device)`: returns `(TestMetrics, list of (pdb_id, real_category, pred_category))` with categories in the original scale (-1, 0, 1).
+- `classification.print_test_classification_report(metrics)`: prints test accuracy.
 
 #### Example script
 
@@ -507,22 +507,22 @@ print_test_classification_report(test_metrics)
 ## Layout
 
 
-| File                            | Role                                                                                                                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **model.py**                    | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`).                                                                                        |
-| **dataset.py**                  | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads pre-built PyG dataset, errors if missing). |
-| **utils.py**                    | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger`, `FOLD_SUBDIR_NAME_RE` (matches `fold_<k>/` directory names).           |
-| **cli_common.py**               | Shared argparse helpers used by `train.py` and `classify.py` (paths and split files for training; fold indices only for classify; batch size; GINE hyperparameters).                                                |
-| **build_dataset.py**            | Builds PyG dataset to `results/datasets/`; writes `build.log`.                                                                                                                      |
-| **check_raw_data_format.py**    | CLI: validate raw dataset at `--data_root`; writes `results/check_format/raw_data/check_input.log`.                                                                               |
-| **check_PyG_data_format.py**    | CLI: validate built dataset at `results/datasets/data.pt` by default; writes `results/check_format/datasets/check_output.log`.                                                      |
-| **loaders.py**                  | `collate_batch`, `create_data_loaders(dataset_root, data_root, ...)` (dataset under `results/datasets/`, splits from raw root).                                                     |
-| **train_epoch.py**              | One-epoch training step: `train_one_epoch`.                                                                                                                                         |
-| **validation.py**               | Validation: `evaluate_validation`, `ValidationMetrics`.                                                                                                                             |
-| **classification.py**           | Test-set classification: `classify_test`, `classify_test_with_predictions`, `TestMetrics`, `print_test_classification_report`.                                                      |
-| **train.py**                    | CLI: load `results/datasets/data.pt`, train; save checkpoints and `fold_<k>/training_metrics.json`, `training_summary.json`, and `train.log` under `results/trainings/`. |
-| **classify.py**                 | CLI: load default checkpoint under `results/trainings/fold_<k>/`, classify train or test split (`--eval_split`); save `fold_<k>/classification_results.json`, `classification_summary.json`, and `classify.log` under `results/classifications/`. |
-| **create_classification_report.py** | CLI: read per-fold classification JSON (including legacy `evaluation_results.json`), optional `--folds`; merge training metrics from `trainings/`; write `index.html` (summary table + tabs), `graphs/`, per-PDB HTML; `create_classification_report.log`. |
-| **visualize_graphs.py**         | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`.   |
+| File | Role |
+|------|------|
+| `model.py` | GINE model: `MProGNN` (hyperparameter defaults align with `mprov3_gine_explainer_defaults`). |
+| `dataset.py` | Helpers: `sdf_to_graph`, `load_activity_and_category`; `load_splits` (three files); `get_train_val_test_indices`; `MProV3Dataset` (loads the pre-built PyG dataset and errors if missing). |
+| `utils.py` | `log_overwrite_if_exists`, `log_overwrite_dir_if_nonempty`, `html_escape()`, `html_document()`, `RunLogger`, `FOLD_SUBDIR_NAME_RE` (matches `fold_<k>/` directory names). |
+| `cli_common.py` | Shared argparse helpers used by `train.py` and `classify.py` (paths and split files for training; fold indices only for classify; batch size; GINE hyperparameters). |
+| `build_dataset.py` | Builds the PyG dataset under `results/datasets/`; writes `build.log`. |
+| `check_raw_data_format.py` | CLI: validate the raw dataset at `--data_root`; writes `results/check_format/raw_data/check_input.log`. |
+| `check_PyG_data_format.py` | CLI: validate the built dataset at `results/datasets/data.pt`; writes `results/check_format/datasets/check_output.log`. |
+| `loaders.py` | `collate_batch`, `create_data_loaders(dataset_root, data_root, ...)` (dataset under `results/datasets/`, splits from the raw root). |
+| `train_epoch.py` | One-epoch training step: `train_one_epoch`. |
+| `validation.py` | Validation: `evaluate_validation`, `ValidationMetrics`. |
+| `classification.py` | Test-set classification: `classify_test`, `classify_test_with_predictions`, `TestMetrics`, `print_test_classification_report`. |
+| `train.py` | CLI: load `results/datasets/data.pt`, train; save checkpoints, `fold_<k>/training_metrics.json`, `training_summary.json`, and `train.log` under `results/trainings/`. |
+| `classify.py` | CLI: load the default checkpoint under `results/trainings/fold_<k>/`, classify the train or test split (`--eval_split`); save `fold_<k>/classification_results.json`, `classification_summary.json`, and `classify.log` under `results/classifications/`. |
+| `create_classification_report.py` | CLI: read per-fold classification JSON (including legacy `evaluation_results.json`), optional `--folds`; merge training metrics from `trainings/`; write `index.html` (summary table + tabs), `graphs/`, per-PDB HTML, plus `create_classification_report.log`. |
+| `visualize_graphs.py` | CLI: read `results/datasets/data.pt`; default plan follows splits (fold × train/val/test); optional `--num-graphs-by-fold` caps each split bucket; write `results/visualizations/` and `visualize.log`. |
 
 
