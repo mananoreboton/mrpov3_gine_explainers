@@ -1,60 +1,30 @@
 {
-  "timestamp": "2026-04-28T23:10:11Z",
+  "timestamp": "2026-04-29T12:08:10Z",
   "data_root": "/Users/mrbueno/code/thesis/from_scratch/mprov3_data",
   "results_root": "/Users/mrbueno/code/thesis/from_scratch/mprov3_gine/results",
   "dataset_name": ".",
   "eval_split": "test",
   "fold_index": 4,
   "num_folds": 5,
-  "accuracy": 0.5733333333333334,
+  "accuracy": 0.64,
   "results": [
     {
-      "pdb_id": "7GN5",
+      "pdb_id": "7GN4",
       "real_category": 1,
       "predicted_category": 1
     },
     {
-      "pdb_id": "9LVR",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GHE",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GBV",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GFI",
-      "real_category": -1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GJJ",
-      "real_category": 0,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GK1",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GKF",
+      "pdb_id": "7GN6",
       "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GI8",
+      "real_category": 0,
       "predicted_category": 0
     },
     {
-      "pdb_id": "7GF0",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GGC",
+      "pdb_id": "7GFN",
       "real_category": -1,
       "predicted_category": -1
     },
@@ -64,9 +34,44 @@
       "predicted_category": 1
     },
     {
-      "pdb_id": "7GIV",
+      "pdb_id": "7GIR",
       "real_category": 0,
       "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GEN",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7M8P",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GKK",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GJJ",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "8CYU",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GIB",
+      "real_category": 0,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GMY",
+      "real_category": 0,
+      "predicted_category": 1
     },
     {
       "pdb_id": "6M2N",
@@ -74,24 +79,49 @@
       "predicted_category": -1
     },
     {
-      "pdb_id": "7GKW",
+      "pdb_id": "7GJ1",
+      "real_category": 0,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GGT",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GIO",
       "real_category": 0,
       "predicted_category": 0
     },
     {
-      "pdb_id": "8CZ7",
-      "real_category": -1,
+      "pdb_id": "7GFM",
+      "real_category": 1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GIV",
+      "real_category": 0,
       "predicted_category": 0
     },
     {
       "pdb_id": "7GL0",
       "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GFO",
+      "real_category": 0,
       "predicted_category": -1
     },
     {
-      "pdb_id": "7GL6",
+      "pdb_id": "7GBW",
       "real_category": -1,
-      "predicted_category": 1
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GIF",
+      "real_category": -1,
+      "predicted_category": -1
     },
     {
       "pdb_id": "7TEL",
@@ -104,42 +134,12 @@
       "predicted_category": 0
     },
     {
-      "pdb_id": "7GMY",
-      "real_category": 0,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GIR",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GN6",
+      "pdb_id": "7GL4",
       "real_category": 1,
       "predicted_category": 1
     },
     {
-      "pdb_id": "7GJ1",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7M8P",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7RN4",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GJS",
-      "real_category": -1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GI8",
+      "pdb_id": "7GKW",
       "real_category": 0,
       "predicted_category": 0
     },
@@ -149,67 +149,12 @@
       "predicted_category": 0
     },
     {
-      "pdb_id": "7GN4",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GHN",
-      "real_category": 1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GMH",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7M91",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GMB",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GM4",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "8YKJ",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GMP",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GFT",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GK4",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GKK",
+      "pdb_id": "7GKZ",
       "real_category": -1,
       "predicted_category": -1
     },
     {
-      "pdb_id": "7GKX",
-      "real_category": 0,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7L12",
+      "pdb_id": "7GKU",
       "real_category": 1,
       "predicted_category": 1
     },
@@ -219,24 +164,104 @@
       "predicted_category": 1
     },
     {
-      "pdb_id": "7GJM",
+      "pdb_id": "9VS1",
       "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GGC",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GF6",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GMB",
+      "real_category": 0,
       "predicted_category": 0
     },
     {
-      "pdb_id": "7GKZ",
+      "pdb_id": "7GMP",
       "real_category": -1,
       "predicted_category": 0
     },
     {
-      "pdb_id": "9NU6",
+      "pdb_id": "8YKJ",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7M91",
       "real_category": 1,
       "predicted_category": 1
     },
     {
-      "pdb_id": "7L11",
+      "pdb_id": "7GF0",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GHE",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7L12",
       "real_category": 1,
       "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GF2",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7L11",
+      "real_category": 1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "9HAJ",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "9G0H",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7L0D",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GJI",
+      "real_category": 1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GFT",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "8UEH",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GJB",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "8CZ7",
+      "real_category": -1,
+      "predicted_category": 0
     },
     {
       "pdb_id": "7GGQ",
@@ -244,12 +269,47 @@
       "predicted_category": 0
     },
     {
-      "pdb_id": "7GFM",
+      "pdb_id": "7GJA",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GFI",
+      "real_category": -1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GK4",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GEB",
+      "real_category": 0,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GHN",
+      "real_category": 1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7RN4",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GH4",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GKF",
       "real_category": 1,
       "predicted_category": 0
     },
     {
-      "pdb_id": "9VS1",
+      "pdb_id": "7GM4",
       "real_category": 1,
       "predicted_category": 1
     },
@@ -259,127 +319,67 @@
       "predicted_category": -1
     },
     {
+      "pdb_id": "9LVR",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GKX",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GN5",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GK1",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "9NU6",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
       "pdb_id": "7GLL",
       "real_category": 1,
       "predicted_category": 1
     },
     {
-      "pdb_id": "9HAJ",
+      "pdb_id": "7GJM",
       "real_category": 1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GL6",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GBV",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GMH",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GNS",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GJS",
+      "real_category": -1,
       "predicted_category": 0
     },
     {
       "pdb_id": "8UR9",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GGT",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GL4",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GF6",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GEN",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GH4",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GF2",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GIO",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "9G0H",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GBW",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GIF",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GEB",
-      "real_category": 0,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GJI",
-      "real_category": 1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "8CYU",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GFO",
-      "real_category": 0,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GIB",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GFN",
-      "real_category": -1,
-      "predicted_category": -1
-    },
-    {
-      "pdb_id": "7GJB",
-      "real_category": -1,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7GJA",
-      "real_category": 0,
-      "predicted_category": 0
-    },
-    {
-      "pdb_id": "7L0D",
-      "real_category": 0,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "8UEH",
-      "real_category": 0,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GKU",
-      "real_category": 1,
-      "predicted_category": 1
-    },
-    {
-      "pdb_id": "7GNS",
       "real_category": 1,
       "predicted_category": 1
     }

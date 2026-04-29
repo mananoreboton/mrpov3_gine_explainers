@@ -2,7 +2,7 @@
   "fold_index": 0,
   "num_folds": 5,
   "use_validation": true,
-  "best_validation_accuracy": 0.7368421052631579,
-  "train_accuracy_at_best_validation": 0.763265306122449,
+  "best_validation_accuracy": 0.6842105263157895,
+  "train_accuracy_at_best_validation": 0.6204081632653061,
   "checkpoint": "best_gnn.pt"
 }
