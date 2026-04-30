@@ -1739,6 +1739,258 @@ def _render_latex_export_block(latex_content: str, summary_text: str) -> str:
     )
 
 
+def _build_per_fold_sections_valid_only(
+    fold_entries_sorted: list[dict],
+    all_explainer_names: list[str],
+) -> str:
+    """Like ``_build_per_fold_sections`` but renders only the valid-graph table."""
+    parts: list[str] = []
+    for entry in fold_entries_sorted:
+        k = entry["fold_index"]
+        fold_link = f"folds/fold_{k}/{EXPLANATION_WEB_REPORT_DIR}/index.html"
+        valid_tbl = _build_per_fold_explainer_table(
+            fold_entries_sorted, all_explainer_names, k, table_kind="valid",
+        )
+        parts.append(
+            f'<section id="fold-{k}">'
+            f'<h3>Fold {k} <a class="muted" href="{html.escape(fold_link, quote=True)}" '
+            f'style="font-size:0.8rem;margin-left:0.5rem">(open fold report)</a></h3>'
+            f'<h4 class="muted">Valid result metrics</h4>{valid_tbl}'
+            f"</section>"
+        )
+    return "\n".join(parts)
+
+
+def _reaggregate_fold_entries_for_class(
+    fold_entries: list[dict],
+    class_id: int,
+) -> list[dict]:
+    """Build ``fold_entries``-like structures containing only correctly-classified
+    graphs whose ``target_class == class_id``.
+
+    Each returned entry has the same shape as the originals but with
+    ``per_explainer_summary`` recomputed from the filtered per-graph data.
+    Only ``valid_result_metrics`` is populated (no ``result_metrics``).
+    """
+    metric_keys = [f"mean_{k}" for k, _ in _METRIC_COLUMNS]
+    raw_metric_keys = [k for k, _ in _METRIC_COLUMNS]
+
+    filtered: list[dict] = []
+    for entry in fold_entries:
+        per_graph_per_explainer: dict[str, list[dict]] = entry.get(
+            "per_graph_per_explainer", {},
+        )
+        new_per_expl: dict[str, dict] = {}
+        for expl_name in entry.get("explainer_names", []):
+            graphs = per_graph_per_explainer.get(expl_name, [])
+            kept = [
+                g for g in graphs
+                if g.get("correct_class") is True
+                and g.get("target_class") == class_id
+            ]
+            valid_kept = [g for g in kept if g.get("valid") is True]
+            n_valid = len(valid_kept)
+
+            valid_block: dict[str, Any] = {"num_valid_graphs": n_valid}
+            for raw_key, mean_key in zip(raw_metric_keys, metric_keys):
+                vals = [
+                    g[raw_key] for g in valid_kept
+                    if raw_key in g
+                    and g[raw_key] is not None
+                    and isinstance(g[raw_key], (int, float))
+                ]
+                valid_block[mean_key] = (
+                    sum(vals) / len(vals) if vals else None
+                )
+
+            new_per_expl[expl_name] = {
+                "valid_result_metrics": valid_block,
+                "result_metrics": {},
+            }
+
+        filtered.append({
+            "fold_index": entry["fold_index"],
+            "explainer_names": entry.get("explainer_names", []),
+            "per_explainer_summary": new_per_expl,
+        })
+    return filtered
+
+
+def _discover_class_ids(fold_entries: list[dict]) -> list[int]:
+    """Return sorted distinct ``target_class`` values seen in per-graph data."""
+    ids: set[int] = set()
+    for entry in fold_entries:
+        for graphs in entry.get("per_graph_per_explainer", {}).values():
+            for g in graphs:
+                tc = g.get("target_class")
+                if isinstance(tc, int):
+                    ids.add(tc)
+    return sorted(ids)
+
+
+def write_per_class_summary_pages(
+    results_root: Path,
+    fold_entries: list[dict],
+) -> list[Path]:
+    """Write one ``explainer_summary_class_<N>.html`` per classification class.
+
+    Only correctly-classified graphs of the given class contribute.  The pages
+    mirror ``explainer_summary.html`` but contain only the valid-graph metric
+    tables (no all-graph / result-metrics tables).
+
+    Returns the list of written file paths.
+    """
+    class_ids = _discover_class_ids(fold_entries)
+    if not class_ids:
+        return []
+
+    written: list[Path] = []
+    for class_id in class_ids:
+        path = _write_single_class_summary_page(
+            results_root, fold_entries, class_id,
+        )
+        written.append(path)
+    return written
+
+
+def _write_single_class_summary_page(
+    results_root: Path,
+    fold_entries: list[dict],
+    class_id: int,
+) -> Path:
+    """Render a single per-class summary page."""
+    gen_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    class_entries = _reaggregate_fold_entries_for_class(fold_entries, class_id)
+    class_entries_sorted = sorted(class_entries, key=lambda e: e["fold_index"])
+
+    all_explainer_names: list[str] = []
+    seen: set[str] = set()
+    for entry in class_entries_sorted:
+        for name in entry.get("explainer_names", []):
+            if name not in seen:
+                seen.add(name)
+                all_explainer_names.append(name)
+
+    valid_vectors = _collect_per_explainer_vectors(
+        class_entries_sorted, all_explainer_names, "valid_result_metrics",
+    )
+
+    mean_valid_table = _build_mean_across_folds_table(
+        all_explainer_names, valid_vectors, table_kind="valid",
+    )
+    coverage_table = _build_coverage_table(
+        all_explainer_names,
+        valid_vectors,
+        valid_vectors,
+        class_entries_sorted,
+    )
+    weighted_valid_table = _build_weighted_table(
+        all_explainer_names, valid_vectors, "num_valid_graphs",
+    )
+    unweighted_valid_table = _build_unweighted_table(
+        all_explainer_names, valid_vectors,
+    )
+    per_fold_html = _build_per_fold_sections_valid_only(
+        class_entries_sorted, all_explainer_names,
+    )
+
+    fold_nav = " &middot; ".join(
+        f'<a href="#fold-{e["fold_index"]}">Fold {e["fold_index"]}</a>'
+        for e in class_entries_sorted
+    )
+
+    latex_content = _build_latex_block_summary_page(
+        all_explainer_names,
+        valid_vectors,
+        valid_vectors,
+        class_entries_sorted,
+    )
+    latex_block = _render_latex_export_block(
+        latex_content, "Export all tables as LaTeX",
+    )
+
+    doc = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Explainer summary &mdash; Class {class_id} (correctly classified)</title>
+  <style>
+{_SUMMARY_CSS}
+{_LATEX_EXPORT_CSS}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Summary by explainer &mdash; Class {class_id} (correctly classified)</h1>
+    <p class="muted">{len(class_entries_sorted)} fold(s) &middot; {len(all_explainer_names)} explainer(s) &middot; HTML generated <code>{html.escape(gen_at)}</code></p>
+    <a class="back-link" href="explainer_summary.html">&larr; Overall explainer summary</a>
+    <nav>
+      <strong>Jump:</strong>
+      <a href="#mean-summary">Mean across folds</a> &middot;
+      <a href="#coverage">Coverage</a> &middot;
+      <a href="#weighted">Weighted stats</a> &middot;
+      <a href="#unweighted">Unweighted stats</a> &middot;
+      <a href="#per-fold">Per-fold</a> ({fold_nav}) &middot;
+      <a href="#latex">LaTeX</a>
+    </nav>
+  </header>
+
+  <section id="mean-summary">
+    <h2>Mean across folds</h2>
+    <p class="muted">Simple mean of each metric across folds, per explainer. Only correctly-classified class-{class_id} graphs contribute.</p>
+    <h4 class="muted">Valid result metrics</h4>
+    {mean_valid_table}
+  </section>
+
+  <section id="coverage">
+    <h2>Valid-graph coverage</h2>
+    <p class="muted">Total valid graphs / total correctly-classified class-{class_id} graphs per explainer, with per-fold breakdown.</p>
+    {coverage_table}
+  </section>
+
+  <section id="weighted">
+    <h2>Weighted statistics across folds</h2>
+    <p class="muted">Weighted by <code>num_valid_graphs</code>. Median, IQR (Q1&ndash;Q3), mean, and std.</p>
+    <h4 class="muted">Valid result metrics</h4>
+    {weighted_valid_table}
+  </section>
+
+  <section id="unweighted">
+    <h2>Unweighted statistics across folds</h2>
+    <p class="muted">Each fold counts equally. Median, IQR (Q1&ndash;Q3), mean, and std.</p>
+    <h4 class="muted">Valid result metrics</h4>
+    {unweighted_valid_table}
+  </section>
+
+  <section id="per-fold">
+    <h2>Per-fold explainer metrics</h2>
+    <p class="muted">Each fold&rsquo;s explainer metrics side by side. Click column headers to sort.</p>
+    {per_fold_html}
+  </section>
+
+  <section id="latex">
+    <h2>LaTeX export</h2>
+    <p class="muted">Ready-to-paste LaTeX tables (requires <code>booktabs</code> package).</p>
+    {latex_block}
+  </section>
+
+  <script>
+{_SUMMARY_JS}
+{_LATEX_COPY_JS}
+  </script>
+</body>
+</html>
+"""
+
+    out_dir = results_root / EXPLANATION_WEB_REPORT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"explainer_summary_class_{class_id}.html"
+    out_path.write_text(doc, encoding="utf-8")
+    return out_path
+
+
 def write_explainer_summary_page(
     results_root: Path,
     fold_entries: list[dict],
@@ -1794,6 +2046,32 @@ def write_explainer_summary_page(
         for e in fold_entries_sorted
     )
 
+    class_ids = _discover_class_ids(fold_entries_sorted)
+    per_class_nav = ""
+    per_class_section = ""
+    if class_ids:
+        per_class_links = " &middot; ".join(
+            f'<a href="explainer_summary_class_{cid}.html">Class {cid}</a>'
+            for cid in class_ids
+        )
+        per_class_nav = (
+            f' &middot;\n      <a href="#per-class">Per-class</a>'
+            f' ({per_class_links})'
+        )
+        per_class_items = "\n".join(
+            f'    <li><a href="explainer_summary_class_{cid}.html">'
+            f"Class {cid} (correctly classified)</a></li>"
+            for cid in class_ids
+        )
+        per_class_section = (
+            '\n  <section id="per-class">\n'
+            "    <h2>Per-class summaries</h2>\n"
+            '    <p class="muted">Metrics restricted to correctly-classified '
+            "graphs of each class.</p>\n"
+            f"    <ul>\n{per_class_items}\n    </ul>\n"
+            "  </section>\n"
+        )
+
     latex_content = _build_latex_block_summary_page(
         all_explainer_names, valid_vectors, all_vectors, fold_entries_sorted,
     )
@@ -1824,7 +2102,7 @@ def write_explainer_summary_page(
       <a href="#coverage">Coverage</a> &middot;
       <a href="#weighted">Weighted stats</a> &middot;
       <a href="#unweighted">Unweighted stats</a> &middot;
-      <a href="#per-fold">Per-fold</a> ({fold_nav}) &middot;
+      <a href="#per-fold">Per-fold</a> ({fold_nav}){per_class_nav} &middot;
       <a href="#latex">LaTeX</a>
     </nav>
   </header>
@@ -1868,6 +2146,7 @@ def write_explainer_summary_page(
     {per_fold_html}
   </section>
 
+  {per_class_section}
   <section id="latex">
     <h2>LaTeX export</h2>
     <p class="muted">Ready-to-paste LaTeX tables (requires <code>booktabs</code> package).</p>

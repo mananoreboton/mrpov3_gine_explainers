@@ -45,6 +45,7 @@ from mprov3_explainer.web_report import (
     write_explainer_summary_page,
     write_fold_explanation_web_report,
     write_global_explanation_index,
+    write_per_class_summary_pages,
 )
 
 
@@ -195,15 +196,18 @@ def _process_fold(
     print(f"Web report written: {out_html}", flush=True)
 
     per_explainer_summary: dict[str, dict] = {}
+    per_graph_per_explainer: dict[str, list[dict]] = {}
     comparison_path = explanations_base / "comparison_report.json"
     if comparison_path.is_file():
         comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
         per_explainer_summary = comparison.get("per_explainer", {})
+        per_graph_per_explainer = comparison.get("per_graph_per_explainer", {})
 
     return {
         "fold_index": fold_index,
         "explainer_names": explainer_names,
         "per_explainer_summary": per_explainer_summary,
+        "per_graph_per_explainer": per_graph_per_explainer,
     }
 
 
@@ -260,6 +264,9 @@ def main() -> None:
         print(f"Global index written: {global_html}", flush=True)
         summary_html = write_explainer_summary_page(results_root, fold_entries)
         print(f"Explainer summary written: {summary_html}", flush=True)
+        class_pages = write_per_class_summary_pages(results_root, fold_entries)
+        for cp in class_pages:
+            print(f"Per-class summary written: {cp}", flush=True)
 
 
 if __name__ == "__main__":

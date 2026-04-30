@@ -30,6 +30,14 @@ primary comparative view with one row per explainer containing:
 - **Weighted statistics** (median, IQR, mean, std weighted by graph count),
 - **Unweighted statistics** (each fold counts equally).
 
+**Per-class summary pages** are also generated alongside the main summary:
+`results/explanation_web_report/explainer_summary_class_<N>.html` (one per
+classification class). Each page contains the same weighted/unweighted
+statistics, coverage, and mean-across-folds tables, but restricted to
+**correctly-classified graphs** of that class only. The all-graph ("Result
+metrics") tables are omitted. Links to the per-class pages appear in a
+dedicated section of the main explainer summary page.
+
 Re-running the explanation script overwrites any existing per-explainer
 output after an `[INFO] Output exists; overwriting under: …` line.
 

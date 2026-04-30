@@ -41,6 +41,7 @@ from mprov3_explainer.web_report import (
     write_explainer_summary_page,
     write_fold_explanation_web_report,
     write_global_explanation_index,
+    write_per_class_summary_pages,
 )
 
 __all__ = [
@@ -76,4 +77,5 @@ __all__ = [
     "write_explainer_summary_page",
     "write_fold_explanation_web_report",
     "write_global_explanation_index",
+    "write_per_class_summary_pages",
 ]
