@@ -3,6 +3,6 @@
   "num_folds": 5,
   "use_validation": true,
   "best_validation_accuracy": 0.6842105263157895,
-  "train_accuracy_at_best_validation": 0.8244897959183674,
+  "train_accuracy_at_best_validation": 0.8204081632653061,
   "checkpoint": "best_gnn.pt"
 }

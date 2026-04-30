@@ -1385,6 +1385,7 @@ name = "mprov3-explainer"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "beautifulsoup4" },
     { name = "captum" },
     { name = "dive-into-graphs" },
     { name = "mprov3-gine-explainer-defaults" },
@@ -1410,6 +1411,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "captum" },
     { name = "dive-into-graphs" },
     { name = "mprov3-gine-explainer-defaults", editable = "../mprov3_gine_explainer_defaults" },

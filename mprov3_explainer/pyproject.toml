@@ -19,6 +19,7 @@ dependencies = [
     "pgmpy",
     "dive-into-graphs",
     "mprov3-gine-explainer-defaults",
+    "beautifulsoup4>=4.12",
 ]
 
 [tool.uv.sources]
