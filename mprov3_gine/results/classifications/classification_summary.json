@@ -7,25 +7,25 @@
     },
     {
       "fold_index": 1,
-      "test_accuracy": 0.5526315789473685,
+      "test_accuracy": 0.5394736842105263,
       "eval_split": "test"
     },
     {
       "fold_index": 2,
-      "test_accuracy": 0.631578947368421,
+      "test_accuracy": 0.6052631578947368,
       "eval_split": "test"
     },
     {
       "fold_index": 3,
-      "test_accuracy": 0.5333333333333333,
+      "test_accuracy": 0.7466666666666667,
       "eval_split": "test"
     },
     {
       "fold_index": 4,
-      "test_accuracy": 0.64,
+      "test_accuracy": 0.5866666666666667,
       "eval_split": "test"
     }
   ],
-  "best_classification_fold_index": 0,
+  "best_classification_fold_index": 3,
   "eval_split": "test"
 }
