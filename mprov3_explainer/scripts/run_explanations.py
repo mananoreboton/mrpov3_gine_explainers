@@ -21,6 +21,10 @@ Both tables expose the Longa et al. (2025) paper metrics (``Fsuf``,
 A cross-explainer ``comparison_report.json`` is written under
 ``results/folds/fold_<k>/explanations/`` for each fold.
 
+A consolidated per-graph CSV for downstream analysis tools is written to
+``results/labeled_explanation_sample.csv`` (one row per explained graph across
+all folds/explainers processed in the run).
+
 Usage:
   uv run python scripts/run_explanations.py
   uv run python scripts/run_explanations.py --split validation
@@ -40,6 +44,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _MPROV3_EXPLAINER_ROOT = _SCRIPT_DIR.parent
@@ -119,6 +125,52 @@ _METRIC_FIELDS: tuple[tuple[str, str], ...] = (
     ("pyg_fidelity_curve_auc", "AUC"),
     ("pyg_unfaithfulness", "GEF"),
 )
+
+_LABELED_SAMPLE_CSV = "labeled_explanation_sample.csv"
+
+
+def _labeled_sample_csv_columns() -> tuple[str, ...]:
+    """Stable column order for ``labeled_explanation_sample.csv``."""
+    identity = ("fold", "split", "explainer", "graph_id")
+    labels = ("target_class", "pred_class", "correct_class")
+    flags = (
+        "valid",
+        "prediction_baseline_mismatch",
+        "has_node_mask",
+        "has_edge_mask",
+    )
+    timing = ("elapsed_s",)
+    metrics = tuple(field for field, _ in _METRIC_FIELDS)
+    return identity + labels + flags + timing + metrics
+
+
+def _extend_labeled_sample_rows(
+    csv_rows: list[dict[str, Any]],
+    *,
+    fold: int,
+    split: str,
+    explainer: str,
+    per_graph: list[dict[str, Any]],
+) -> None:
+    cols = _labeled_sample_csv_columns()
+    for entry in per_graph:
+        row: dict[str, Any] = {
+            "fold": int(fold),
+            "split": str(split),
+            "explainer": str(explainer),
+        }
+        for key in cols[3:]:
+            row[key] = entry[key]
+        csv_rows.append(row)
+
+
+def _write_labeled_explanation_sample_csv(csv_rows: list[dict[str, Any]]) -> Path:
+    """Write consolidated per-graph samples for analysis UIs (overwrites each run)."""
+    dest = _MPROV3_EXPLAINER_ROOT / RESULTS_DIR_NAME / _LABELED_SAMPLE_CSV
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    df = pd.DataFrame(csv_rows, columns=list(_labeled_sample_csv_columns()))
+    df.to_csv(dest, index=False)
+    return dest
 
 
 @dataclass
@@ -632,7 +684,11 @@ def write_prediction_baseline(
 # ----------------------------------------------------------------------------
 
 
-def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
+def _run_fold(
+    args: argparse.Namespace,
+    ctx: ExplanationRunContext,
+    csv_rows: list[dict[str, Any]],
+) -> None:
     """Run all explainers on one fold and write the comparison report."""
     explainer_names = list(AVAILABLE_EXPLAINERS)
 
@@ -651,11 +707,19 @@ def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
     all_reports: dict[str, dict] = {}
     for explainer_name in explainer_names:
         seed_everything(args.seed)
-        all_reports[explainer_name] = run_one_explainer(
+        report = run_one_explainer(
             ctx,
             explainer_name,
             seed=args.seed,
             prediction_baseline=prediction_baseline,
+        )
+        all_reports[explainer_name] = report
+        _extend_labeled_sample_rows(
+            csv_rows,
+            fold=ctx.fold_index,
+            split=ctx.split_name,
+            explainer=explainer_name,
+            per_graph=report["per_graph"],
         )
 
     json_path = write_comparison_report(
@@ -672,6 +736,7 @@ def _run_fold(args: argparse.Namespace, ctx: ExplanationRunContext) -> None:
 
 def main() -> None:
     args = parse_args()
+    labeled_csv_rows: list[dict[str, Any]] = []
     seed_everything(args.seed)
     print(
         f"[INFO] Seeded RNGs (torch / numpy / random / PyG) with seed={args.seed}",
@@ -693,10 +758,13 @@ def main() -> None:
         for k in fold_indices:
             print(f"\n{'='*60}\n  FOLD {k}\n{'='*60}", flush=True)
             ctx = build_explanation_run_context_for_fold(args, k, num_folds)
-            _run_fold(args, ctx)
+            _run_fold(args, ctx, labeled_csv_rows)
     else:
         ctx = build_explanation_run_context(args)
-        _run_fold(args, ctx)
+        _run_fold(args, ctx, labeled_csv_rows)
+
+    out_csv = _write_labeled_explanation_sample_csv(labeled_csv_rows)
+    print(f"Labeled explanation samples CSV: {out_csv}", flush=True)
 
 
 if __name__ == "__main__":
