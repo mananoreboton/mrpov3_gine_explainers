@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from mprov3_dui.ff1_tables import (
+    explainer_order,
+    ff1_fold_explainer_stats,
+    ff1_fold_summary_from_samples,
+    ff1_one_fold_explainer_table,
+    ff1_per_explainer_fold_body,
+    ff1_per_explainer_with_footer,
+    ff1_weighted_across_folds_from_samples,
+)
 from mprov3_dui.latex_export import dataframe_to_booktabs_latex
 from mprov3_dui.paths import default_labeled_sample_csv
 from mprov3_dui.ranking import (
@@ -36,6 +46,10 @@ def _coerce_bool_series(series: pd.Series) -> pd.Series:
 
 def _section_anchor(html_id: str) -> None:
     st.markdown(f'<span id="{html_id}"></span>', unsafe_allow_html=True)
+
+
+def _file_slug_part(label: str) -> str:
+    return re.sub(r"[^\w\-.]+", "_", label, flags=re.ASCII)[:96]
 
 
 def _show_table_download(
@@ -126,79 +140,165 @@ st.caption(
     "global summary: **mean** of within-fold ranks."
 )
 
-st.markdown("### Tables")
-st.markdown(
-    "Jump to a section: "
-    "[1. Raw explanation samples](#sec-01) · "
-    "[2. Class-level metric aggregates](#sec-02) · "
-    "[3. Best target class score](#sec-03) · "
-    "[4. Within-fold explainer ranking](#sec-04) · "
-    "[5. Global rank summary](#sec-05). "
-    "_Links scroll the page in the browser view._"
+ff1_stats = ff1_fold_explainer_stats(df)
+
+tab_rank, tab_xexpl, tab_xfold = st.tabs(
+    ["Ranking & exports", "Cross-explainer Ff1", "Cross-fold Ff1"],
 )
 
-samples_sorted = df.sort_values(["fold", "explainer", "graph_id"]).reset_index(drop=True)
-_show_table_download(
-    section_id="sec-01",
-    title="1. Raw explanation samples",
-    description=(
-        "Selection: rows with **`valid` true** only (same for all tables). "
-        "Calculation: none; values are as stored for each explained graph. "
-        "Sorted by fold, explainer, and graph id."
-    ),
-    df=samples_sorted,
-    file_slug="01_per_sample",
-)
+with tab_rank:
+    st.markdown("### Tables")
+    st.markdown(
+        "Jump to a section: "
+        "[1. Raw explanation samples](#sec-01) · "
+        "[2. Class-level metric aggregates](#sec-02) · "
+        "[3. Best target class score](#sec-03) · "
+        "[4. Within-fold explainer ranking](#sec-04) · "
+        "[5. Global rank summary](#sec-05). "
+        "_Links scroll the page in the browser view._"
+    )
 
-class_scores = class_level_scores(df, RANKING_METRIC)
-_show_table_download(
-    section_id="sec-02",
-    title="2. Class-level metric aggregates",
-    description=(
-        "Selection: same valid samples as table 1. For each (fold, explainer, target_class), "
-        f"**mean** of **{RANKING_METRIC}** across graphs (NaNs ignored). "
-        "One aggregate per class bucket before taking the best class per explainer."
-    ),
-    df=class_scores,
-    file_slug="02_class_scores",
-)
+    samples_sorted = df.sort_values(["fold", "explainer", "graph_id"]).reset_index(drop=True)
+    _show_table_download(
+        section_id="sec-01",
+        title="1. Raw explanation samples",
+        description=(
+            "Selection: rows with **`valid` true** only (same for all tables). "
+            "Calculation: none; values are as stored for each explained graph. "
+            "Sorted by fold, explainer, and graph id."
+        ),
+        df=samples_sorted,
+        file_slug="01_per_sample",
+    )
 
-best_cls = best_class_per_fold_explainer(class_scores)
-_show_table_download(
-    section_id="sec-03",
-    title="3. Best target class score per fold and explainer",
-    description=(
-        "Selection: rows from the class-level table (section 2). Calculation: for each pair "
-        "(fold, explainer), **maximum** of the class scores—the best target class under "
-        f"**{RANKING_METRIC}** for that fold and explainer. "
-        "Ties keep one row (first after sorting by score descending)."
-    ),
-    df=best_cls,
-    file_slug="03_best_class_per_fold_explainer",
-)
+    class_scores = class_level_scores(df, RANKING_METRIC)
+    _show_table_download(
+        section_id="sec-02",
+        title="2. Class-level metric aggregates",
+        description=(
+            "Selection: same valid samples as table 1. For each (fold, explainer, target_class), "
+            f"**mean** of **{RANKING_METRIC}** across graphs (NaNs ignored). "
+            "One aggregate per class bucket before taking the best class per explainer."
+        ),
+        df=class_scores,
+        file_slug="02_class_scores",
+    )
 
-fold_ranks = fold_level_explainer_ranks(best_cls)
-_show_table_download(
-    section_id="sec-04",
-    title="4. Within-fold explainer ranking",
-    description=(
-        "Selection: best-per-class scores (section 3). Calculation: within each **fold**, "
-        "explainers are ranked by that best score (**rank 1** is best). Tied scores receive "
-        "the **average rank** (pandas `method='average'`)."
-    ),
-    df=fold_ranks.sort_values(["fold", "explainer_rank"]),
-    file_slug="04_fold_explainer_ranks",
-)
+    best_cls = best_class_per_fold_explainer(class_scores)
+    _show_table_download(
+        section_id="sec-03",
+        title="3. Best target class score per fold and explainer",
+        description=(
+            "Selection: rows from the class-level table (section 2). Calculation: for each pair "
+            "(fold, explainer), **maximum** of the class scores—the best target class under "
+            f"**{RANKING_METRIC}** for that fold and explainer. "
+            "Ties keep one row (first after sorting by score descending)."
+        ),
+        df=best_cls,
+        file_slug="03_best_class_per_fold_explainer",
+    )
 
-global_ranks = global_rank_aggregate(fold_ranks)
-_show_table_download(
-    section_id="sec-05",
-    title="5. Global rank summary",
-    description=(
-        "Selection: within-fold ranks (section 4). Calculation: for each explainer, **mean** "
-        "of **explainer_rank** across folds. "
-        "Lower **rank_agg** indicates better overall ranking under mean-of-ranks."
-    ),
-    df=global_ranks,
-    file_slug="05_global_rank_aggregate",
-)
+    fold_ranks = fold_level_explainer_ranks(best_cls)
+    _show_table_download(
+        section_id="sec-04",
+        title="4. Within-fold explainer ranking",
+        description=(
+            "Selection: best-per-class scores (section 3). Calculation: within each **fold**, "
+            "explainers are ranked by that best score (**rank 1** is best). Tied scores receive "
+            "the **average rank** (pandas `method='average'`)."
+        ),
+        df=fold_ranks.sort_values(["fold", "explainer_rank"]),
+        file_slug="04_fold_explainer_ranks",
+    )
+
+    global_ranks = global_rank_aggregate(fold_ranks)
+    _show_table_download(
+        section_id="sec-05",
+        title="5. Global rank summary",
+        description=(
+            "Selection: within-fold ranks (section 4). Calculation: for each explainer, **mean** "
+            "of **explainer_rank** across folds. "
+            "Lower **rank_agg** indicates better overall ranking under mean-of-ranks."
+        ),
+        df=global_ranks,
+        file_slug="05_global_rank_aggregate",
+    )
+
+with tab_xexpl:
+    st.markdown("### Cross-explainer Ff1 (valid samples)")
+    st.caption(
+        "Metric: **`paper_f1_fidelity` (Ff1)**. Within each (fold, explainer), **Mean Ff1** is the "
+        "sample mean and **Std Ff1** is the **population** standard deviation (divide by n); "
+        "undefined when fewer than two graphs. **Aggregate** row: **Mean** column = mean of body "
+        "means; **Std** column = pooled √(Σ n_k σ_k² / Σ n_k) over body rows with defined σ."
+    )
+
+    for i, ex in enumerate(explainer_order(df)):
+        body = ff1_per_explainer_fold_body(ff1_stats, ex)
+        full = ff1_per_explainer_with_footer(body)
+        slug_ex = _file_slug_part(ex)
+        _show_table_download(
+            section_id=f"xe-per-{i}",
+            title=f"Per-explainer across folds — {ex}",
+            description=(
+                "One row per fold for this explainer: valid graph count, mean and population std "
+                "of Ff1 over valid explained graphs in that fold. Last row aggregates across folds."
+            ),
+            df=full,
+            file_slug=f"xe_ff1_folds_{i:02d}_{slug_ex}",
+        )
+
+    fold_summary = ff1_fold_summary_from_samples(df)
+    _show_table_download(
+        section_id="xe-fold-summary",
+        title="Summary by fold",
+        description=(
+            "Computed **only from raw sample rows** (not from the per-explainer tables above). "
+            "Per fold: **Mean Ff1** = nanmean across explainers of each explainer’s within-fold "
+            "mean Ff1 (each explainer counts equally). **Std Ff1** = population std of Ff1 over "
+            "**all** valid graphs in that fold (all explainers pooled). **Aggregate** uses the "
+            "same mean-of-means and pooled-std rule on the fold rows (weights = fold graph counts)."
+        ),
+        df=fold_summary,
+        file_slug="xe_ff1_summary_by_fold",
+    )
+
+with tab_xfold:
+    st.markdown("### Cross-fold Ff1 (valid samples)")
+    xf_expl = explainer_order(df)
+    xf_folds = sorted(df["fold"].unique().tolist())
+    st.caption(
+        "Like `explainer_summary` **Per-fold explainer metrics** (valid): per fold, all explainers in "
+        "sort order—**Mean Ff1**, **Std Ff1**, and valid graph counts from raw rows. Footer: mean "
+        "of means and pooled combined std √(Σ n·σ²)/Σ n. **Weighted statistics across folds**: same "
+        "Mean/Std Ff1 as the HTML weighted block, but recomputed directly from samples (never from "
+        "the per-fold tables above)."
+    )
+
+    for i, fold in enumerate(xf_folds):
+        xf_tbl = ff1_one_fold_explainer_table(df, int(fold), xf_expl)
+        slug_f = _file_slug_part(str(fold))
+        _show_table_download(
+            section_id=f"xf-fold-{i}",
+            title=f"Per-fold explainer metrics — Fold {fold}",
+            description=(
+                "Valid **Mean Ff1** / **Std Ff1** only: one row per explainer (explainers absent in "
+                "this fold show 0 valid graphs). **Aggregate** row: mean of Mean Ff1 and pooled Std."
+            ),
+            df=xf_tbl,
+            file_slug=f"xf_ff1_fold_{slug_f}_{i:02d}",
+        )
+
+    weighted_xf = ff1_weighted_across_folds_from_samples(df)
+    _show_table_download(
+        section_id="xf-weighted",
+        title="Weighted statistics across folds",
+        description=(
+            "Computed **only from raw sample rows** (not derived from the per-fold tables above). "
+            "Per explainer: **Mean Ff1** = Σ_f n_f μ_f / Σ_f n_f and **Std Ff1** = weighted RMS of fold "
+            "means μ_f about that mean (weights n_f = valid graphs per fold), matching "
+            "`explanation_web_report` weighted Mean/Std. **Aggregate**: mean of means and pooled std."
+        ),
+        df=weighted_xf,
+        file_slug="xf_ff1_weighted_across_folds",
+    )
