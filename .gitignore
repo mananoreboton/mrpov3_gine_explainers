@@ -51,13 +51,17 @@ htmlcov/
 *~
 
 # --- Project outputs (trainings, datasets, explanations, logs) ---
-results/
+*.png
+*.jpg
 
 # --- Local dataset snapshot (large; remove this block if you version data selectively) ---
-/mprov3_data/
+/mprov3_data/*/
 
 # --- Misc generated ---
 *.log
 *.tmp
 *.temp
 .cache/
+
+*.zip
+extra/*

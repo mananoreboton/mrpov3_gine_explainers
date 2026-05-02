@@ -1,0 +1,234 @@
+"""Unit tests for ``mprov3_explainer.pipeline`` correctness fixes."""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+import torch
+from torch_geometric.explain import Explanation
+
+from mprov3_explainer.pipeline import (
+    DEFAULT_FIDELITY_CURVE_TOP_K,
+    DEFAULT_PAPER_N_THRESHOLDS,
+    ExplanationResult,
+    _binarize_explanation_top_k,
+    _clamp_unit,
+    _paper_f1_fidelity,
+    _paper_metrics_from_edge_mask,
+    _paper_metrics_from_masks,
+    _paper_sufficiency_and_comprehensiveness,
+    _percentile_keep_fractions,
+    diagnose_explanation_run,
+    nanmean,
+)
+
+
+# ---------------------------------------------------------------------------
+# Ff1 clamping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("Fsuf,Fcom", [
+    (-0.5, 0.4),    # Fsuf below 0
+    (1.2, 0.5),     # Fsuf above 1
+    (0.4, -0.2),    # Fcom below 0
+    (0.4, 1.5),     # Fcom above 1
+    (-0.5, -0.5),   # both below 0
+    (2.0, 2.0),     # both above 1
+])
+def test_paper_f1_fidelity_in_unit_interval_for_adversarial_inputs(Fsuf, Fcom):
+    out = _paper_f1_fidelity(Fsuf, Fcom)
+    assert not math.isnan(out)
+    assert 0.0 <= out <= 1.0
+
+
+def test_paper_f1_fidelity_propagates_nan():
+    assert math.isnan(_paper_f1_fidelity(float("nan"), 0.5))
+    assert math.isnan(_paper_f1_fidelity(0.5, float("nan")))
+
+
+def test_paper_f1_fidelity_matches_paper_formula():
+    Fsuf, Fcom = 0.3, 0.4
+    expected = 2.0 * (1.0 - Fsuf) * Fcom / ((1.0 - Fsuf) + Fcom)
+    assert math.isclose(_paper_f1_fidelity(Fsuf, Fcom), expected)
+
+
+def test_clamp_unit_preserves_nan():
+    assert math.isnan(_clamp_unit(float("nan")))
+    assert _clamp_unit(-0.1) == 0.0
+    assert _clamp_unit(1.5) == 1.0
+    assert _clamp_unit(0.5) == 0.5
+
+
+# ---------------------------------------------------------------------------
+# Top-k binarization on Explanation objects (used internally by the
+# fidelity-curve sweep)
+# ---------------------------------------------------------------------------
+
+
+def test_binarize_explanation_top_k_produces_hard_masks():
+    x = torch.eye(5)
+    edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]], dtype=torch.long)
+    edge_mask = torch.tensor([0.1, 0.4, 0.9, 0.2])
+    node_mask = torch.tensor([0.05, 0.5, 0.7, 0.3, 0.9])
+    expl = Explanation(
+        x=x, edge_index=edge_index, edge_mask=edge_mask, node_mask=node_mask,
+    )
+    out = _binarize_explanation_top_k(expl, k=0.5)
+    assert out.edge_mask is not None and out.node_mask is not None
+    assert set(torch.unique(out.edge_mask).tolist()).issubset({0.0, 1.0})
+    assert set(torch.unique(out.node_mask).tolist()).issubset({0.0, 1.0})
+
+
+# ---------------------------------------------------------------------------
+# Percentile sweep symmetry
+# ---------------------------------------------------------------------------
+
+
+class _ConstModel(torch.nn.Module):
+    """Tiny GNN-shaped model that returns the same logits for every input."""
+
+    def __init__(self, num_classes: int = 2):
+        super().__init__()
+        self.num_classes = num_classes
+        self.bias = torch.nn.Parameter(torch.tensor([0.7, 0.3]), requires_grad=False)
+
+    def forward(self, x, edge_index, batch=None, edge_attr=None):
+        if batch is None:
+            return self.bias.unsqueeze(0)
+        n_graphs = int(batch.max().item()) + 1 if batch.numel() else 1
+        return self.bias.unsqueeze(0).expand(n_graphs, -1)
+
+
+def test_percentile_keep_fractions_descends_from_almost_one_to_almost_zero():
+    fractions = _percentile_keep_fractions(100)
+    assert len(fractions) == 99
+    assert fractions[0] == pytest.approx(0.99)
+    assert fractions[-1] == pytest.approx(0.01)
+    assert fractions == sorted(fractions, reverse=True)
+
+
+def test_node_native_sweep_is_zero_for_constant_model():
+    n = 20
+    x = torch.eye(n)
+    src = torch.arange(n, dtype=torch.long)
+    dst = (src + 1) % n
+    edge_index = torch.stack([src, dst], dim=0)
+    expl = Explanation(x=x, edge_index=edge_index)
+    node_mask = torch.linspace(0.0, 1.0, n)
+    Fsuf, Fcom = _paper_sufficiency_and_comprehensiveness(
+        _ConstModel(),
+        expl,
+        node_mask=node_mask,
+        target_class=0,
+        n_thresholds=10,
+    )
+    assert math.isclose(Fsuf, 0.0, abs_tol=1e-6)
+    assert math.isclose(Fcom, 0.0, abs_tol=1e-6)
+
+
+def test_edge_native_sweep_is_zero_for_constant_model():
+    n = 20
+    x = torch.eye(n)
+    src = torch.arange(n, dtype=torch.long)
+    dst = (src + 1) % n
+    edge_index = torch.stack([src, dst], dim=0)
+    expl = Explanation(x=x, edge_index=edge_index)
+    edge_mask = torch.linspace(0.1, 1.0, edge_index.size(1))
+    Fsuf, Fcom = _paper_metrics_from_edge_mask(
+        _ConstModel(),
+        expl,
+        edge_mask=edge_mask,
+        target_class=0,
+        n_thresholds=10,
+    )
+    assert math.isclose(Fsuf, 0.0, abs_tol=1e-6)
+    assert math.isclose(Fcom, 0.0, abs_tol=1e-6)
+
+
+def test_paper_metrics_dispatches_to_edge_native_for_edge_only_explanation():
+    """An explanation with only an edge mask must NOT silently coerce to a node mask."""
+    x = torch.eye(4)
+    edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 0]], dtype=torch.long)
+    edge_mask = torch.tensor([0.1, 0.3, 0.7, 0.9])
+    expl = Explanation(x=x, edge_index=edge_index, edge_mask=edge_mask)
+    Fsuf, Fcom, Ff1 = _paper_metrics_from_masks(
+        _ConstModel(),
+        expl,
+        target_class=0,
+        n_thresholds=20,
+    )
+    assert not math.isnan(Fsuf)
+    assert not math.isnan(Fcom)
+    assert 0.0 <= Ff1 <= 1.0 or math.isnan(Ff1)
+
+
+# ---------------------------------------------------------------------------
+# NaN-aware aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_nanmean_skips_nan_values():
+    assert math.isclose(nanmean([1.0, 2.0, float("nan"), 3.0]), 2.0)
+    assert math.isclose(nanmean([float("nan"), 0.5]), 0.5)
+    assert math.isnan(nanmean([float("nan"), float("nan")]))
+    assert math.isnan(nanmean([]))
+
+
+def test_nanmean_skips_none():
+    assert math.isclose(nanmean([1.0, None, 3.0]), 2.0)
+
+
+# ---------------------------------------------------------------------------
+# Run diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_diagnose_explanation_run_marks_no_valid_failure():
+    results = [
+        ExplanationResult(
+            graph_id=f"g{i}",
+            explanation=Explanation(),
+            valid=False,
+        )
+        for i in range(3)
+    ]
+    status, note = diagnose_explanation_run(results)
+    assert status == "failed_no_valid_metrics"
+    assert "valid-only aggregates" in note
+
+
+def test_diagnose_explanation_run_marks_partial_invalid():
+    results = [
+        ExplanationResult(graph_id="g0", explanation=Explanation(), valid=True),
+        ExplanationResult(graph_id="g1", explanation=Explanation(), valid=False),
+    ]
+    status, note = diagnose_explanation_run(results)
+    assert status == "partial_invalid"
+    assert "1 of 2" in note
+
+
+def test_diagnose_explanation_run_marks_ok_when_all_valid():
+    results = [
+        ExplanationResult(graph_id=f"g{i}", explanation=Explanation(), valid=True)
+        for i in range(2)
+    ]
+    status, _ = diagnose_explanation_run(results)
+    assert status == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+
+def test_default_paper_n_thresholds_is_100():
+    assert DEFAULT_PAPER_N_THRESHOLDS == 100
+
+
+def test_default_fidelity_curve_top_k_is_sorted_ascending():
+    grid = list(DEFAULT_FIDELITY_CURVE_TOP_K)
+    assert grid == sorted(grid)
+    assert all(0.0 < k < 1.0 for k in grid)
+    assert len(grid) >= 3

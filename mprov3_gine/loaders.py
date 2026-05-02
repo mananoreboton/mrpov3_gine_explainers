@@ -1,28 +1,29 @@
 """
-Data loaders: collate function and factory for train/val/test DataLoaders.
+PyG DataLoaders for train, validation, and test splits.
+
+Expects a built dataset under results/datasets/ and split PDB lists from the raw snapshot.
+See README.md and ``create_data_loaders`` docstring for parameters.
 """
 
 from pathlib import Path
 from typing import List, Tuple
-
-import torch
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader
 
 from dataset import MProV3Dataset, get_train_val_test_indices, load_dataset_pdb_order
-from config import SplitConfig
+from mprov3_gine_explainer_defaults import SplitConfig
 
 
-def collate_batch(
-    batch: List,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Collate so that pIC50 and category are stacked and batch vector is set."""
+def collate_batch(batch: List):
+    """Collate a list of PyG Data objects into a single PyG Batch.
+
+    The returned Batch keeps graph-level attributes (for example ``category``
+    and ``pIC50``) as concatenated tensors, so training/evaluation loops can
+    consume it directly via ``batch.to(device)``.
+    """
     from torch_geometric.data import Batch
 
-    data_batch = Batch.from_data_list([b for b in batch])
-    pIC50 = torch.cat([b.pIC50 for b in batch], dim=0)
-    category = torch.cat([b.category for b in batch], dim=0)
-    return data_batch, pIC50, category
+    return Batch.from_data_list([b for b in batch])
 
 
 def create_data_loaders(
@@ -33,7 +34,8 @@ def create_data_loaders(
 ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Build train, validation, and test DataLoaders. Loads the PyG dataset from
-    dataset_root/split_config.dataset_name (must exist; run build_dataset.py first).
+    dataset_root/split_config.dataset_name (typically dataset_root=.../results/datasets
+    and dataset_name=\".\" / BUILT_DATASET_FOLDER_NAME; run build_dataset.py first).
     Splits are read from data_root/Splits/ (raw MPro snapshot).
     """
     dataset = MProV3Dataset(
@@ -49,6 +51,7 @@ def create_data_loaders(
         split_config.num_folds,
         split_config.fold_index,
         dataset_pdb_order=dataset_pdb_order,
+        use_validation=split_config.use_validation,
     )
     train_dataset = Subset(dataset, train_idx.tolist())
     val_dataset = Subset(dataset, val_idx.tolist())

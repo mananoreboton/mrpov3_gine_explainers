@@ -23,7 +23,7 @@ from typing import List, Tuple
 
 import pandas as pd
 
-from config import (
+from mprov3_gine_explainer_defaults import (
     CHECK_FORMAT_RAW_DATA_SUBDIR,
     DEFAULT_DATA_ROOT,
     DEFAULT_RESULTS_ROOT,
@@ -41,7 +41,7 @@ from dataset import (
     load_splits,
     sdf_to_graph,
 )
-from utils import RunLogger, run_timestamp
+from utils import RunLogger
 
 
 @dataclass
@@ -425,10 +425,7 @@ def main() -> None:
     args = _parse_args()
     data_root = Path(args.data_root or DEFAULT_DATA_ROOT)
 
-    ts = run_timestamp()
-    log_dir = (
-        Path(DEFAULT_RESULTS_ROOT) / RESULTS_CHECK_FORMAT / CHECK_FORMAT_RAW_DATA_SUBDIR / ts
-    )
+    log_dir = Path(DEFAULT_RESULTS_ROOT) / RESULTS_CHECK_FORMAT / CHECK_FORMAT_RAW_DATA_SUBDIR
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "check_input.log"
 

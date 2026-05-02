@@ -1,0 +1,8 @@
+{
+  "fold_index": 4,
+  "num_folds": 5,
+  "use_validation": true,
+  "best_validation_accuracy": 0.7543859649122807,
+  "train_accuracy_at_best_validation": 0.8130081300813008,
+  "checkpoint": "best_gnn.pt"
+}

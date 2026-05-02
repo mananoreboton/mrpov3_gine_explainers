@@ -1,0 +1,387 @@
+{
+  "timestamp": "2026-04-30T00:30:29Z",
+  "data_root": "/Users/mrbueno/code/thesis/from_scratch/mprov3_data",
+  "results_root": "/Users/mrbueno/code/thesis/from_scratch/mprov3_gine/results",
+  "dataset_name": ".",
+  "eval_split": "test",
+  "fold_index": 3,
+  "num_folds": 5,
+  "accuracy": 0.5733333333333334,
+  "results": [
+    {
+      "pdb_id": "7RLS",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GJ6",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GKP",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GLV",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "8Y44",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "8UEF",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GDZ",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "9KSI",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GN7",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7O46",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GM0",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GJK",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7VTH",
+      "real_category": -1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "8ACD",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GJ8",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GI6",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7EN8",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GK3",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GK6",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "8ACL",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GNK",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GBE",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GBX",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GI9",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GFE",
+      "real_category": -1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7M8O",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "8W1U",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GMJ",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7M8M",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GDI",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "5RH3",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GGR",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7L14",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GG2",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GLK",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GKV",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GME",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GNB",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GML",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "8R12",
+      "real_category": -1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GII",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GGB",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GH5",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GMI",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GEK",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GJO",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GIX",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GJQ",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GFP",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GCV",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GH6",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GLC",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GIS",
+      "real_category": 0,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GEI",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "9DDF",
+      "real_category": 0,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7EN9",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GGI",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7UR9",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7RMZ",
+      "real_category": -1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GLW",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7LTJ",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GFR",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "7GEW",
+      "real_category": -1,
+      "predicted_category": -1
+    },
+    {
+      "pdb_id": "8R11",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GLG",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GIT",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "9G0I",
+      "real_category": 1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GGJ",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GKJ",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7RMT",
+      "real_category": -1,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GHM",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GK7",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "7GE9",
+      "real_category": -1,
+      "predicted_category": 0
+    },
+    {
+      "pdb_id": "7GG7",
+      "real_category": 0,
+      "predicted_category": 1
+    },
+    {
+      "pdb_id": "9DDG",
+      "real_category": 0,
+      "predicted_category": -1
+    }
+  ]
+}

@@ -7,6 +7,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
+from typing import Tuple
+
 from model import MProGNN
 
 
@@ -16,10 +18,12 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     device: torch.device,
     criterion_ce: nn.Module,
-) -> float:
-    """Run one training epoch (cross-entropy on category); return mean loss."""
+) -> Tuple[float, float]:
+    """Run one training epoch (cross-entropy on category); return (mean loss, train accuracy)."""
     model.train()
     total_loss = 0.0
+    correct = 0
+    total = 0
     for batch in loader:
         batch = batch.to(device)
         category = batch.category.to(device).squeeze(-1)
@@ -30,4 +34,9 @@ def train_one_epoch(
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
-    return total_loss / len(loader) if len(loader) else 0.0
+        pred = logits.argmax(dim=1)
+        correct += (pred == category).sum().item()
+        total += category.size(0)
+    mean_loss = total_loss / len(loader) if len(loader) else 0.0
+    train_acc = correct / total if total else 0.0
+    return mean_loss, train_acc
