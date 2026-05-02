@@ -18,7 +18,12 @@ from mprov3_dui.ff1_tables import (
     ff1_weighted_across_folds_from_samples,
 )
 from mprov3_dui.latex_export import dataframe_to_booktabs_latex
-from mprov3_dui.paths import default_labeled_sample_csv
+from mprov3_dui.paths import default_labeled_sample_csv, folds_root_from_labeled_csv
+from mprov3_dui.report_wall_times import (
+    load_wall_time_s_map,
+    runtime_explainer_wall_totals_html_parity,
+    runtime_fold_mean_wall_html_parity,
+)
 from mprov3_dui.ranking import (
     METRIC_COLUMNS,
     RANKING_METRIC,
@@ -88,6 +93,15 @@ csv_path = st.sidebar.text_input(
     help="Default: mprov3_explainer/results/labeled_explanation_sample.csv",
 )
 
+_infer_csv_for_folds = Path(csv_path.strip()) if csv_path.strip() else default_path
+_default_folds = folds_root_from_labeled_csv(_infer_csv_for_folds)
+folds_root_str = st.sidebar.text_input(
+    "Folds root (for wall_time_s)",
+    value=str(_default_folds),
+    help="Directory with fold_*/explanations (default: results/folds next to the CSV). "
+    "Runtime tables read comparison_report.json / explanation_report.json here—same source as HTML.",
+)
+
 if not csv_path.strip():
     st.warning("Set a CSV path.")
     st.stop()
@@ -142,8 +156,13 @@ st.caption(
 
 ff1_stats = ff1_fold_explainer_stats(df)
 
-tab_rank, tab_xexpl, tab_xfold = st.tabs(
-    ["Ranking & exports", "Cross-explainer Ff1", "Cross-fold Ff1"],
+tab_rank, tab_xexpl, tab_xfold, tab_runtime = st.tabs(
+    [
+        "Ranking & exports",
+        "Cross-explainer Ff1",
+        "Cross-fold Ff1",
+        "Runtime results",
+    ],
 )
 
 with tab_rank:
@@ -302,3 +321,62 @@ with tab_xfold:
         df=weighted_xf,
         file_slug="xf_ff1_weighted_across_folds",
     )
+
+with tab_runtime:
+    st.markdown("### Runtime (HTML-parity **`wall_time_s`**)")
+
+    folds_root_ui = Path(folds_root_str.strip()) if folds_root_str.strip() else _default_folds
+    wall_map = load_wall_time_s_map(folds_root_ui)
+    folds_scope = sorted(int(f) for f in df["fold"].unique())
+
+    doc = (
+        "Values match **`result_metrics.wall_time_s`** in **`comparison_report.json`** per fold "
+        "(same payload the static HTML builder uses via `generate_visualizations`). "
+        "If that file is missing, each **`explanation_report.json`** under the fold is read instead.\n\n"
+        f"**Fold scope:** rows use folds **`{folds_scope}`** from your CSV union with folds found under "
+        f"`{folds_root_ui.resolve()}` (both must overlap for totals to match cross-fold HTML)."
+    )
+    st.caption(doc)
+
+    if not wall_map:
+        st.warning(
+            f"No **`wall_time_s`** data found under `{folds_root_ui.resolve()}`. "
+            "Check **Folds root** points at `results/folds` containing `fold_*` runs."
+        )
+    elif not folds_scope:
+        st.warning("No folds in CSV.")
+    else:
+        folds_missing = sorted(f for f in folds_scope if f not in wall_map)
+        if folds_missing:
+            st.warning(
+                f"No JSON timings for folds {folds_missing} under this folds root; "
+                "those folds are omitted (HTML may include more folds if you rerun with a fuller tree)."
+            )
+
+        folds_used = sorted(f for f in folds_scope if f in wall_map)
+        if not folds_used:
+            st.error("CSV folds do not overlap any fold dirs with timing JSON.")
+        else:
+            by_expl_total = runtime_explainer_wall_totals_html_parity(wall_map, folds_used)
+            _show_table_download(
+                section_id="rt-expl-mean-fold",
+                title="Mean across folds — Result runtime (narrow)",
+                description=(
+                    "Per explainer: **Wall (s) total** = sum of `wall_time_s` over folds in scope "
+                    "(same aggregation as explainer_summary → Mean across folds → Result metrics)."
+                ),
+                df=by_expl_total,
+                file_slug="rt_wall_total_by_explainer",
+            )
+
+            by_fold = runtime_fold_mean_wall_html_parity(wall_map, folds_used)
+            _show_table_download(
+                section_id="rt-fold-summary",
+                title="Summary by fold — Result runtime (narrow)",
+                description=(
+                    "Per fold: **Wall (s)** = mean across explainers' `wall_time_s` "
+                    "(same as index → Summary by fold → Result metrics)."
+                ),
+                df=by_fold,
+                file_slug="rt_wall_mean_by_fold",
+            )
